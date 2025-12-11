@@ -1,0 +1,230 @@
+---
+title: ROS 2 Core Concepts - Nodes, Topics, Services, Actions
+description: Understanding the fundamental building blocks of ROS 2
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Explain the role of nodes in ROS 2
+- Understand topic-based communication
+- Use services for request/reply communication
+- Implement actions for goal-oriented tasks
+- Design simple ROS 2 systems using these concepts
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapter 1 on Physical AI and Embodied Intelligence
+- Have ROS 2 Humble Hawksbill installed on Ubuntu 22.04
+- Be familiar with basic Python programming
+- Understand fundamental robotics concepts
+
+## Introduction
+
+ROS 2 (Robot Operating System 2) provides a framework for developing robot applications through a distributed architecture based on nodes and communication primitives. Unlike monolithic software systems, ROS 2 enables modular development where different components can run independently and communicate through standardized interfaces.
+
+The core of ROS 2 architecture consists of four main communication patterns:
+- **Nodes**: The basic execution units that perform computation
+- **Topics**: Asynchronous, publisher-subscriber communication
+- **Services**: Synchronous, request-reply communication
+- **Actions**: Goal-oriented communication for long-running tasks
+
+These patterns enable the development of complex robotic systems from simple, reusable components.
+
+## Core Concepts
+
+### Nodes
+
+Nodes are the fundamental building blocks of ROS 2 applications. Each node performs a specific task and communicates with other nodes through topics, services, and actions.
+
+Key characteristics of nodes:
+- Encapsulate specific functionality (e.g., sensor processing, motion control, perception)
+- Communicate with other nodes through ROS 2 communication primitives
+- Can be written in different programming languages (C++, Python, etc.)
+- Run independently and can be started/stopped individually
+
+### Topics and Publishers/Subscribers
+
+Topics enable asynchronous, publisher-subscriber communication between nodes. Key concepts include:
+
+- **Publishers**: Send messages to a topic
+- **Subscribers**: Receive messages from a topic
+- **Messages**: Structured data exchanged between nodes
+- **Quality of Service (QoS)**: Define reliability, durability, and other communication properties
+
+Topics are ideal for streaming data like sensor readings, robot states, or control commands.
+
+### Services
+
+Services provide synchronous, request-reply communication. Key aspects:
+
+- **Service Client**: Sends a request and waits for a response
+- **Service Server**: Receives requests and sends responses
+- **Service Types**: Define the structure of request and response messages
+
+Services are suitable for operations that have a clear beginning and end, like setting parameters or requesting a specific computation.
+
+### Actions
+
+Actions are designed for long-running tasks with feedback. They include:
+
+- **Goal**: Request to start a long-running task
+- **Feedback**: Periodic updates on task progress
+- **Result**: Final outcome of the task
+
+Actions are perfect for navigation, manipulation, or any task that takes time and requires monitoring.
+
+## Code Examples
+
+```python
+# Example: Simple publisher-subscriber pattern
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+class Talker(Node):
+    def __init__(self):
+        super().__init__('talker')
+        self.publisher = self.create_publisher(String, 'chatter', 10)
+        timer_period = 0.5  # seconds
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.i = 0
+
+    def timer_callback(self):
+        msg = String()
+        msg.data = f'Hello World: {self.i}'
+        self.publisher.publish(msg)
+        self.get_logger().info(f'Publishing: "{msg.data}"')
+        self.i += 1
+
+class Listener(Node):
+    def __init__(self):
+        super().__init__('listener')
+        self.subscription = self.create_subscription(
+            String,
+            'chatter',
+            self.listener_callback,
+            10)
+        self.subscription  # prevent unused variable warning
+
+    def listener_callback(self, msg):
+        self.get_logger().info(f'I heard: "{msg.data}"')
+
+def main(args=None):
+    rclpy.init(args=args)
+    talker = Talker()
+    listener = Listener()
+
+    # Spin both nodes
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(talker)
+    executor.add_node(listener)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        executor.shutdown()
+        rclpy.shutdown()
+```
+
+```python
+# Example: Service client and server
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts
+
+class AddTwoIntsServer(Node):
+    def __init__(self):
+        super().__init__('add_two_ints_server')
+        self.srv = self.create_service(AddTwoInts, 'add_two_ints', self.add_two_ints_callback)
+
+    def add_two_ints_callback(self, request, response):
+        response.sum = request.a + request.b
+        self.get_logger().info(f'Returning {request.a} + {request.b} = {response.sum}')
+        return response
+
+class AddTwoIntsClient(Node):
+    def __init__(self):
+        super().__init__('add_two_ints_client')
+        self.cli = self.create_client(AddTwoInts, 'add_two_ints')
+        while not self.cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+        self.req = AddTwoInts.Request()
+
+    def send_request(self, a, b):
+        self.req.a = a
+        self.req.b = b
+        future = self.cli.call_async(self.req)
+        rclpy.spin_until_future_complete(self, future)
+        return future.result()
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    client = AddTwoIntsClient()
+    response = client.send_request(2, 3)
+    client.get_logger().info(f'Result: {response.sum}')
+
+    client.destroy_node()
+    rclpy.shutdown()
+```
+
+## Diagrams and Visuals
+
+![ROS 2 Architecture](/img/diagrams/ROS 2-architecture.png)
+
+*Figure 1: ROS 2 architecture showing nodes, topics, services, and actions.*
+
+## Hands-On Lab
+
+### Exercise 1: Publisher-Subscriber Communication
+Create a simple ROS 2 publisher-subscriber system to understand the communication pattern:
+
+1. Create a new ROS 2 package: `ros2_basics`
+2. Implement a publisher node that publishes temperature readings
+3. Implement a subscriber node that processes temperature data
+4. Test the communication between nodes
+
+### Exercise 2: Service Implementation
+Implement a ROS 2 service for robot control:
+
+1. Create a custom service definition for moving a robot arm
+2. Implement a service server that controls the arm
+3. Create a client that sends commands to the server
+4. Test the service with different parameters
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Nodes cannot communicate**: This often happens when nodes are on different ROS domains or namespaces. Solution: Check `ROS_DOMAIN_ID` and ensure nodes are in the same domain.
+- **Issue: Topic not receiving messages**: Verify that the publisher is running and that topic names match exactly (including case).
+- **Issue: Service calls timeout**: Check that the service server is running and that the service name is correct.
+- **Issue: Memory leaks with subscriptions**: Always properly handle node destruction and clean up resources.
+
+## Summary
+
+This chapter introduced the core concepts of ROS 2: nodes, topics, services, and actions. These communication patterns form the foundation of ROS 2 applications, enabling modular and distributed robot software development. Understanding these concepts is essential for building complex robotic systems.
+
+## Further Reading
+
+- ROS 2 Documentation: Core Concepts
+- Design Patterns in ROS 2
+- Quality of Service in ROS 2 Communication
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Design a simple robot system using ROS 2 communication patterns (identify which components would be nodes and how they would communicate).
+2. Explain the differences between topics, services, and actions, and when to use each.
+3. Implement a ROS 2 system with at least 3 nodes communicating through different patterns.
+
+<!-- Optional: Add custom components for interactive elements -->

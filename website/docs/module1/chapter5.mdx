@@ -1,0 +1,315 @@
+---
+title: "Creating Launch Files & Parameter Management"
+description: Managing ROS 2 system startup and configuration using launch files and parameters
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Create launch files for complex ROS 2 systems
+- Manage parameters using launch files and parameter servers
+- Organize multiple nodes with different configurations
+- Handle node lifecycles and startup dependencies
+- Use conditional launching and argument passing
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapters 1-4 on Physical AI, ROS 2 concepts, Python packages, and URDF
+- Be familiar with ROS 2 nodes, topics, and services
+- Understand how to create and run ROS 2 nodes
+- Have experience with Python and basic XML/JSON configuration
+
+## Introduction
+
+Launch files in ROS 2 provide a way to start multiple nodes simultaneously with predefined configurations. They allow for centralized management of system startup, parameter assignment, and inter-node relationships. For complex humanoid robotics systems, launch files are essential for coordinating the numerous nodes that control different subsystems like perception, planning, control, and simulation.
+
+The launch system in ROS 2 is built on the `launch` package, which provides a Python-based framework for defining launch files. These files can include complex logic for conditional node startup, parameter management, and system orchestration.
+
+## Core Concepts
+
+### Launch File Structure
+
+A typical launch file includes:
+- Node definitions with executables and packages
+- Parameter assignments for individual nodes
+- Remappings for topics and services
+- Conditional logic for different configurations
+- Included other launch files for modularity
+
+### Parameter Management
+
+Parameters in ROS 2 can be managed through:
+- Launch files (passed at startup)
+- Parameter files (YAML format)
+- Parameter servers (runtime configuration)
+- Command-line arguments
+
+### Launch Arguments
+
+Launch files can accept arguments that customize behavior:
+- Robot models and configurations
+- Simulation vs real robot settings
+- Debugging and logging levels
+- Environment-specific parameters
+
+### Node Composition
+
+Launch files can also manage:
+- Node lifecycles (startup, shutdown, restart)
+- Node groups and namespaces
+- Action servers and clients
+- Event handling and monitoring
+
+## Code Examples
+
+### Basic Launch File
+
+```python
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
+
+
+def generate_launch_description():
+    """Generate launch description for a simple robot controller."""
+
+    return LaunchDescription([
+        Node(
+            package='ros2_arm_control',
+            executable='arm_controller',
+            name='arm_controller',
+            output='screen',
+            parameters=[
+                {'use_sim_time': True},
+                {'control_frequency': 50.0},
+                {'max_velocity': 1.0}
+            ],
+            remappings=[
+                ('/joint_commands', '/sim/joint_commands'),
+                ('/joint_states', '/sim/joint_states')
+            ]
+        ),
+        Node(
+            package='ros2_arm_control',
+            executable='arm_client',
+            name='arm_client',
+            output='screen',
+            parameters=[
+                {'use_sim_time': True}
+            ]
+        )
+    ])
+```
+
+### Launch File with Arguments
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    """Generate launch description with configurable parameters."""
+
+    # Declare launch arguments
+    robot_model_arg = DeclareLaunchArgument(
+        'robot_model',
+        default_value='humanoid_v1',
+        description='Robot model to use in simulation'
+    )
+
+    simulation_arg = DeclareLaunchArgument(
+        'use_simulation',
+        default_value='true',
+        description='Whether to use simulation or real robot'
+    )
+
+    # Get launch configurations
+    robot_model = LaunchConfiguration('robot_model')
+    use_simulation = LaunchConfiguration('use_simulation')
+
+    return LaunchDescription([
+        robot_model_arg,
+        simulation_arg,
+
+        Node(
+            package='robot_controller',
+            executable='controller_node',
+            name='controller',
+            parameters=[
+                {'robot_model': robot_model},
+                {'simulation_mode': use_simulation}
+            ],
+            output='screen'
+        )
+    ])
+```
+
+### Launch File with Parameter Files
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+def generate_launch_description():
+    """Generate launch description using external parameter files."""
+
+    # Declare launch argument for parameter file
+    params_file_arg = DeclareLaunchArgument(
+        'params_file',
+        default_value=PathJoinSubstitution([
+            FindPackageShare('robot_config'),
+            'config',
+            'humanoid_params.yaml'
+        ]),
+        description='Full path to the parameters file to use for robot control'
+    )
+
+    return LaunchDescription([
+        params_file_arg,
+
+        Node(
+            package='robot_controller',
+            executable='arm_controller',
+            name='arm_controller',
+            parameters=[LaunchConfiguration('params_file')],
+            output='screen'
+        ),
+
+        Node(
+            package='robot_controller',
+            executable='navigation_controller',
+            name='nav_controller',
+            parameters=[LaunchConfiguration('params_file')],
+            output='screen'
+        )
+    ])
+```
+
+### Complex Launch File with Conditions
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, LogInfo
+from launch.conditions import IfCondition
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    """Generate complex launch description with conditional logic."""
+
+    # Declare launch arguments
+    use_rviz_arg = DeclareLaunchArgument(
+        'use_rviz',
+        default_value='true',
+        description='Whether to launch RViz'
+    )
+
+    debug_mode_arg = DeclareLaunchArgument(
+        'debug',
+        default_value='false',
+        description='Enable debug output'
+    )
+
+    # Get launch configurations
+    use_rviz = LaunchConfiguration('use_rviz')
+    debug_mode = LaunchConfiguration('debug')
+
+    return LaunchDescription([
+        use_rviz_arg,
+        debug_mode_arg,
+
+        # Launch the main controller
+        Node(
+            package='robot_controller',
+            executable='main_controller',
+            name='main_controller',
+            parameters=[
+                {'debug_mode': debug_mode}
+            ],
+            output='screen'
+        ),
+
+        # Conditionally launch RViz
+        Node(
+            condition=IfCondition(use_rviz),
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            arguments=['-d', [FindPackageShare('robot_viz'), '/config/rviz_config.rviz']],
+            output='screen'
+        ),
+
+        # Log a message based on debug mode
+        LogInfo(
+            condition=IfCondition(debug_mode),
+            msg='Debug mode is enabled'
+        )
+    ])
+```
+
+## Diagrams and Visuals
+
+![Launch System Architecture](/img/diagrams/launch-system-architecture.png)
+
+*Figure 1: The ROS 2 launch system architecture showing launch files, nodes, and parameter management.*
+
+## Hands-On Lab
+
+### Exercise 1: Create a Modular Launch System
+Create a launch system for a humanoid robot with separate launch files:
+
+1. Create a base launch file for core controllers
+2. Create a separate launch file for sensors
+3. Create a launch file for visualization
+4. Combine them in a master launch file using `IncludeLaunchDescription`
+
+### Exercise 2: Parameter Management System
+Implement a parameter management system for different robot configurations:
+
+1. Create YAML parameter files for different robot variants
+2. Implement a launch file that selects parameters based on arguments
+3. Test the system with different robot configurations
+4. Validate that parameters are properly loaded at runtime
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Node fails to start from launch file**: Check that the executable name matches the entry point in setup.py and that the package is properly sourced.
+- **Issue: Parameters not loading**: Verify YAML syntax, file paths, and that the parameter file is accessible to the launch system.
+- **Issue: Remappings not working**: Ensure topic names match exactly and that remapped topics are used consistently in the code.
+- **Issue: Launch file hangs**: Check for circular dependencies and ensure all required packages are available.
+
+## Summary
+
+This chapter covered the fundamentals of creating and managing launch files in ROS 2 for complex robotic systems. We explored parameter management, launch arguments, and conditional logic for creating flexible and maintainable launch configurations. Understanding launch files is crucial for deploying and operating complex humanoid robots with multiple coordinated subsystems.
+
+## Further Reading
+
+- ROS 2 Launch System Documentation
+- Parameter Management Best Practices
+- Launch File Design Patterns
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Create a launch file that starts a complete humanoid robot simulation with controllers, sensors, and visualization.
+2. Implement a parameter file system for different robot loading configurations (lightweight, medium, heavy).
+3. Design a launch system that can switch between simulation and real robot modes.
+
+<!-- Optional: Add custom components for interactive elements -->

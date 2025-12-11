@@ -1,0 +1,1035 @@
+---
+title: "Perception: VSLAM (Isaac ROS) + Navigation"
+description: Implementing visual SLAM and navigation for humanoid robots using Isaac ROS and Nav2
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the principles of Visual SLAM (VSLAM) for humanoid robots
+- Implement VSLAM using Isaac ROS components
+- Integrate VSLAM with the Nav2 navigation stack
+- Configure navigation parameters for humanoid-specific locomotion
+- Plan and execute navigation paths for bipedal walking
+- Handle navigation challenges specific to humanoid robots
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1 and Module 2 on ROS 2 fundamentals and physics simulation
+- Understand the basics of computer vision and SLAM concepts
+- Be familiar with Isaac Sim and Isaac ROS components
+- Have experience with the Nav2 navigation stack
+- Understand humanoid robot kinematics and locomotion principles
+
+## Introduction
+
+Visual SLAM (Simultaneous Localization and Mapping) is a critical capability for autonomous humanoid robots, enabling them to navigate unknown environments while building a map of their surroundings. Unlike wheeled robots, humanoid robots face unique challenges in navigation due to their bipedal locomotion, balance requirements, and complex kinematics.
+
+Isaac ROS provides a comprehensive set of components for implementing robust VSLAM systems that can handle the specific requirements of humanoid robots. These components include optimized visual processing algorithms, sensor fusion capabilities, and integration with the Nav2 navigation stack.
+
+The VSLAM + Navigation pipeline for humanoid robots typically involves:
+- **Visual Odometry**: Estimating motion from camera images
+- **Mapping**: Building a representation of the environment
+- **Localization**: Determining the robot's position within the map
+- **Path Planning**: Computing safe and efficient navigation paths
+- **Path Execution**: Controlling the robot to follow the planned path
+
+## Core Concepts
+
+### Visual SLAM Fundamentals
+
+Visual SLAM systems for humanoid robots must handle:
+- **Motion Blur**: From dynamic walking motions
+- **Rolling Shutter Effects**: From CMOS cameras during rapid movement
+- **Scale Ambiguity**: Without depth sensors
+- **Dynamic Objects**: Moving obstacles in the environment
+- **Changing Illumination**: Indoor/outdoor lighting variations
+
+### Isaac ROS VSLAM Components
+
+Isaac ROS provides several key VSLAM components:
+- **Stereo Visual Inertial Odometry (SVIO)**: Combines stereo vision with IMU data
+- **Optical Flow Processing**: Tracks features between frames
+- **Feature Detection and Matching**: Identifies and matches visual features
+- **Bundle Adjustment**: Optimizes camera poses and 3D points
+- **Loop Closure Detection**: Recognizes previously visited locations
+
+### Humanoid Navigation Challenges
+
+Navigation for humanoid robots differs from wheeled robots in several ways:
+- **Footstep Planning**: Requires discrete footstep sequences
+- **Balance Constraints**: Must maintain center of mass over support polygon
+- **Dynamic Walking**: Requires continuous balance control
+- **Terrain Assessment**: Must evaluate walkability of surfaces
+- **Obstacle Avoidance**: Must consider full body dimensions, not just base
+
+### Nav2 Integration
+
+The Nav2 stack integration includes:
+- **Costmap Configuration**: Adjusted for humanoid dimensions and capabilities
+- **Path Planners**: Optimized for bipedal locomotion
+- **Controller Plugins**: Specialized for humanoid motion
+- **Recovery Behaviors**: Appropriate for humanoid robots
+
+## Code Examples
+
+### Isaac ROS VSLAM Node Integration
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import Image, CameraInfo, Imu
+from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.msg import Odometry, Path
+from visualization_msgs.msg import MarkerArray
+from tf2_ros import TransformBroadcaster
+import numpy as np
+import cv2
+from cv_bridge import CvBridge
+import message_filters
+import tf2_ros
+import tf_transformations
+from geometry_msgs.msg import TransformStamped
+from builtin_interfaces.msg import Time
+
+
+class IsaacVSLAMNavigationNode(Node):
+    """
+    Integration node for Isaac ROS VSLAM and Nav2 navigation.
+    """
+
+    def __init__(self):
+        super().__init__('isaac_vslam_navigation')
+
+        # Initialize CV bridge
+        self.cv_bridge = CvBridge()
+
+        # TF broadcaster
+        self.tf_broadcaster = TransformBroadcaster(self)
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # QoS profile for sensor data
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Subscribe to camera data
+        self.left_image_sub = message_filters.Subscriber(
+            self, Image, '/camera/left/image_rect_color', qos_profile=qos_profile)
+        self.right_image_sub = message_filters.Subscriber(
+            self, Image, '/camera/right/image_rect_color', qos_profile=qos_profile)
+        self.left_cam_info_sub = message_filters.Subscriber(
+            self, CameraInfo, '/camera/left/camera_info', qos_profile=qos_profile)
+        self.right_cam_info_sub = message_filters.Subscriber(
+            self, CameraInfo, '/camera/right/camera_info', qos_profile=qos_profile)
+
+        # IMU for inertial data
+        self.imu_sub = self.create_subscription(
+            Imu, '/imu/data', self.imu_callback, 10)
+
+        # Synchronize stereo data
+        self.sync = message_filters.ApproximateTimeSynchronizer(
+            [self.left_image_sub, self.right_image_sub,
+             self.left_cam_info_sub, self.right_cam_info_sub],
+            queue_size=10,
+            slop=0.1
+        )
+        self.sync.registerCallback(self.stereo_callback)
+
+        # Navigation publishers
+        self.odom_pub = self.create_publisher(Odometry, '/visual_odom', 10)
+        self.map_pub = self.create_publisher(OccupancyGrid, '/visual_map', 10)
+        self.path_pub = self.create_publisher(Path, '/visual_path', 10)
+
+        # Navigation goal publisher (to Nav2)
+        self.nav_goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
+
+        # Internal state
+        self.current_pose = np.eye(4)
+        self.map_points = []
+        self.imu_data = None
+        self.camera_matrix = None
+        self.processing_enabled = True
+
+        # Isaac ROS VSLAM parameters
+        self.feature_detector = cv2.ORB_create(nfeatures=2000)
+        self.bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        self.prev_frame = None
+
+        # Navigation state
+        self.navigation_active = False
+        self.goal_pose = None
+        self.current_path = []
+
+        self.get_logger().info('Isaac VSLAM Navigation node initialized')
+
+    def stereo_callback(self, left_msg, right_msg, left_cam_info, right_cam_info):
+        """
+        Process synchronized stereo data for VSLAM.
+        """
+        if not self.processing_enabled:
+            return
+
+        try:
+            # Convert ROS images to OpenCV
+            left_cv = self.cv_bridge.imgmsg_to_cv2(left_msg, desired_encoding='bgr8')
+            right_cv = self.cv_bridge.imgmsg_to_cv2(right_msg, desired_encoding='bgr8')
+
+            # Update camera parameters
+            if self.camera_matrix is None:
+                self.camera_matrix = np.array(left_cam_info.k).reshape(3, 3)
+
+            # Process VSLAM
+            pose_change = self.process_vslam(left_cv, right_cv)
+
+            if pose_change is not None:
+                self.update_pose(pose_change, left_msg.header.stamp)
+                self.publish_visualization(left_cv, left_msg.header.stamp)
+
+        except Exception as e:
+            self.get_logger().error(f'Error in stereo callback: {e}')
+
+    def imu_callback(self, imu_msg):
+        """
+        Process IMU data for inertial integration.
+        """
+        self.imu_data = {
+            'angular_velocity': [
+                imu_msg.angular_velocity.x,
+                imu_msg.angular_velocity.y,
+                imu_msg.angular_velocity.z
+            ],
+            'linear_acceleration': [
+                imu_msg.linear_acceleration.x,
+                imu_msg.linear_acceleration.y,
+                imu_msg.linear_acceleration.z
+            ],
+            'orientation': [
+                imu_msg.orientation.x,
+                imu_msg.orientation.y,
+                imu_msg.orientation.z,
+                imu_msg.orientation.w
+            ]
+        }
+
+    def process_vslam(self, left_img, right_img):
+        """
+        Process stereo images for VSLAM with IMU integration.
+        """
+        if self.prev_frame is None:
+            self.prev_frame = left_img.copy()
+            return None
+
+        # Extract features from current frame
+        curr_kp, curr_desc = self.feature_detector.detectAndCompute(left_img, None)
+        prev_kp, prev_desc = self.feature_detector.detectAndCompute(self.prev_frame, None)
+
+        if curr_desc is None or prev_desc is None:
+            return None
+
+        # Match features
+        matches = self.bf_matcher.knnMatch(prev_desc, curr_desc, k=2)
+
+        # Apply Lowe's ratio test
+        good_matches = []
+        for match_pair in matches:
+            if len(match_pair) == 2:
+                m, n = match_pair
+                if m.distance < 0.75 * n.distance:
+                    good_matches.append(m)
+
+        # Need minimum number of matches
+        if len(good_matches) < 10:
+            self.prev_frame = left_img.copy()
+            return None
+
+        # Extract matched points
+        prev_pts = np.float32([prev_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        curr_pts = np.float32([curr_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        # Estimate motion using essential matrix (if camera matrix is available)
+        if self.camera_matrix is not None:
+            E, mask = cv2.findEssentialMat(
+                curr_pts, prev_pts,
+                cameraMatrix=self.camera_matrix,
+                method=cv2.RANSAC,
+                prob=0.999,
+                threshold=1.0
+            )
+
+            if E is not None:
+                # Decompose essential matrix to get rotation and translation
+                _, R, t, mask_pose = cv2.recoverPose(E, curr_pts, prev_pts, self.camera_matrix)
+
+                # Create transformation matrix
+                pose_change = np.eye(4)
+                pose_change[:3, :3] = R
+                pose_change[:3, 3] = t.flatten()
+
+                # Integrate with IMU data if available
+                if self.imu_data is not None:
+                    pose_change = self.integrate_imu_data(pose_change)
+
+                # Update previous frame
+                self.prev_frame = left_img.copy()
+                return pose_change
+
+        # Update previous frame
+        self.prev_frame = left_img.copy()
+        return None
+
+    def integrate_imu_data(self, visual_pose_change):
+        """
+        Integrate IMU data with visual pose change for improved accuracy.
+        """
+        if self.imu_data is None:
+            return visual_pose_change
+
+        # Simple integration of IMU data with visual odometry
+        # In a real implementation, this would use more sophisticated sensor fusion
+        imu_rotation = self.quaternion_to_rotation_matrix(self.imu_data['orientation'])
+
+        # Combine visual and IMU rotations (simplified approach)
+        combined_rotation = visual_pose_change[:3, :3] @ imu_rotation
+
+        # Update the rotation part of the pose change
+        result_pose = visual_pose_change.copy()
+        result_pose[:3, :3] = combined_rotation
+
+        return result_pose
+
+    def update_pose(self, pose_change, stamp):
+        """
+        Update the current pose based on the estimated change.
+        """
+        # Apply pose change to current pose
+        self.current_pose = self.current_pose @ pose_change
+
+        # Publish odometry
+        odom_msg = Odometry()
+        odom_msg.header.stamp = stamp
+        odom_msg.header.frame_id = 'map'
+        odom_msg.child_frame_id = 'base_link'
+
+        # Set position
+        odom_msg.pose.pose.position.x = self.current_pose[0, 3]
+        odom_msg.pose.pose.position.y = self.current_pose[1, 3]
+        odom_msg.pose.pose.position.z = self.current_pose[2, 3]
+
+        # Set orientation
+        rotation_matrix = self.current_pose[:3, :3]
+        quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+        odom_msg.pose.pose.orientation.x = quat[0]
+        odom_msg.pose.pose.orientation.y = quat[1]
+        odom_msg.pose.pose.orientation.z = quat[2]
+        odom_msg.pose.pose.orientation.w = quat[3]
+
+        # Publish odometry
+        self.odom_pub.publish(odom_msg)
+
+        # Publish TF
+        self.publish_transform(stamp)
+
+        # Update navigation if active
+        if self.navigation_active:
+            self.update_navigation_path()
+
+    def publish_transform(self, stamp):
+        """
+        Publish the transform from map to base_link.
+        """
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'base_link'
+
+        # Set translation
+        t.transform.translation.x = self.current_pose[0, 3]
+        t.transform.translation.y = self.current_pose[1, 3]
+        t.transform.translation.z = self.current_pose[2, 3]
+
+        # Set rotation
+        rotation_matrix = self.current_pose[:3, :3]
+        quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+        t.transform.rotation.x = quat[0]
+        t.transform.rotation.y = quat[1]
+        t.transform.rotation.z = quat[2]
+        t.transform.rotation.w = quat[3]
+
+        # Send the transform
+        self.tf_broadcaster.sendTransform(t)
+
+    def publish_visualization(self, image, stamp):
+        """
+        Publish visualization data for debugging.
+        """
+        # Draw features on the image for visualization
+        if self.prev_frame is not None:
+            # This is just for visualization - in practice, you might publish to a debug topic
+            cv2.imshow('VSLAM Features', image)
+            cv2.waitKey(1)
+
+    def quaternion_to_rotation_matrix(self, quat):
+        """
+        Convert quaternion to rotation matrix.
+        """
+        x, y, z, w = quat
+        rotation_matrix = np.array([
+            [1 - 2*(y**2 + z**2), 2*(x*y - w*z), 2*(x*z + w*y)],
+            [2*(x*y + w*z), 1 - 2*(x**2 + z**2), 2*(y*z - w*x)],
+            [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x**2 + y**2)]
+        ])
+        return rotation_matrix
+
+    def rotation_matrix_to_quaternion(self, rotation_matrix):
+        """
+        Convert a 3x3 rotation matrix to quaternion.
+        """
+        quat = tf_transformations.quaternion_from_matrix(
+            np.vstack([np.hstack([rotation_matrix, np.zeros((3, 1))]),
+                      [0, 0, 0, 1]])
+        )
+        return quat
+
+    def set_navigation_goal(self, x, y, theta=0.0):
+        """
+        Set a navigation goal for the robot.
+        """
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.header.frame_id = 'map'
+        goal_msg.pose.position.x = x
+        goal_msg.pose.position.y = y
+        goal_msg.pose.position.z = 0.0
+
+        # Convert theta to quaternion
+        quat = tf_transformations.quaternion_from_euler(0, 0, theta)
+        goal_msg.pose.orientation.x = quat[0]
+        goal_msg.pose.orientation.y = quat[1]
+        goal_msg.pose.orientation.z = quat[2]
+        goal_msg.pose.orientation.w = quat[3]
+
+        self.nav_goal_pub.publish(goal_msg)
+        self.navigation_active = True
+        self.goal_pose = goal_msg.pose
+        self.get_logger().info(f'Set navigation goal to ({x}, {y})')
+
+    def update_navigation_path(self):
+        """
+        Update the navigation path based on current position and goal.
+        """
+        if self.goal_pose is None:
+            return
+
+        # Calculate distance to goal
+        current_pos = np.array([self.current_pose[0, 3], self.current_pose[1, 3]])
+        goal_pos = np.array([self.goal_pose.position.x, self.goal_pose.position.y])
+        distance_to_goal = np.linalg.norm(current_pos - goal_pos)
+
+        # If close to goal, stop navigation
+        if distance_to_goal < 0.5:  # 0.5 meters threshold
+            self.navigation_active = False
+            self.get_logger().info('Reached navigation goal')
+            return
+
+        # Calculate path to goal
+        path_msg = Path()
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        path_msg.header.frame_id = 'map'
+
+        # Create a simple path (in a real implementation, this would be more sophisticated)
+        step_size = 0.2  # 20 cm steps
+        steps = int(distance_to_goal / step_size)
+
+        for i in range(steps + 1):
+            ratio = i / steps if steps > 0 else 0
+            pos = current_pos + ratio * (goal_pos - current_pos)
+
+            pose_stamped = PoseStamped()
+            pose_stamped.header.stamp = self.get_clock().now().to_msg()
+            pose_stamped.header.frame_id = 'map'
+            pose_stamped.pose.position.x = pos[0]
+            pose_stamped.pose.position.y = pos[1]
+            pose_stamped.pose.position.z = 0.0
+
+            # Set orientation towards goal
+            angle_to_goal = np.arctan2(goal_pos[1] - current_pos[1],
+                                     goal_pos[0] - current_pos[0])
+            quat = tf_transformations.quaternion_from_euler(0, 0, angle_to_goal)
+            pose_stamped.pose.orientation.x = quat[0]
+            pose_stamped.pose.orientation.y = quat[1]
+            pose_stamped.pose.orientation.z = quat[2]
+            pose_stamped.pose.orientation.w = quat[3]
+
+            path_msg.poses.append(pose_stamped)
+
+        self.path_pub.publish(path_msg)
+        self.current_path = path_msg.poses
+
+    def enable_processing(self, enable=True):
+        """
+        Enable or disable VSLAM processing.
+        """
+        self.processing_enabled = enable
+        state = "enabled" if enable else "disabled"
+        self.get_logger().info(f'VSLAM processing {state}')
+
+
+def main(args=None):
+    """
+    Main function to run the Isaac VSLAM Navigation node.
+    """
+    rclpy.init(args=args)
+
+    vslam_nav_node = IsaacVSLAMNavigationNode()
+
+    try:
+        rclpy.spin(vslam_nav_node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        vslam_nav_node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Nav2 Configuration for Humanoid Robots
+
+```yaml
+# /mnt/c/Users/saad/Desktop/quickbook-hackathon/my-humanoid-robotics-book/examples/module3_lab/isaac_perception/config/nav2_humanoid.yaml
+
+# Global Costmap Configuration
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: true
+      # Humanoid-specific parameters
+      robot_radius: 0.4  # Larger radius to account for bipedal width
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0  # Humanoid height consideration
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0  # Higher for humanoid safety
+        inflation_radius: 0.7     # Larger inflation for humanoid
+
+# Local Costmap Configuration
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: true
+      # Humanoid-specific parameters
+      robot_radius: 0.3  # Slightly smaller for local planning
+      resolution: 0.025
+      width: 4.0
+      height: 4.0
+      plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: True
+        publish_voxel_map: True
+        origin_z: 0.0
+        z_resolution: 0.2
+        z_voxels: 10
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: pointcloud
+        pointcloud:
+          topic: /head_lidar/points
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "PointCloud2"
+          min_obstacle_height: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0  # Higher for local safety
+        inflation_radius: 0.5
+
+# Planner Server Configuration
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner::NavfnPlanner"
+      tolerance: 0.5        # Higher tolerance for humanoid navigation
+      use_astar: false
+      allow_unknown: true
+
+# Controller Server Configuration
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.05
+    min_y_velocity_threshold: 0.1
+    min_theta_velocity_threshold: 0.05
+    controller_plugins: ["FollowPath"]
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 32
+      model_dt: 0.05
+      batch_size: 2000
+      vx_std: 0.2
+      vy_std: 0.15
+      wz_std: 0.3
+      vx_max: 0.5      # Reduced for humanoid stability
+      vx_min: -0.2
+      vy_max: 0.3
+      wz_max: 0.6
+      xy_goal_tolerance: 0.3
+      yaw_goal_tolerance: 0.3
+      xy_goal_tolerance: 0.3
+      stateful: true
+      model_plugin_name: "HolonomicSteeringModel"
+      critic_names: [
+        "BaseObstacleCritic",
+        "GoalCritic",
+        "PathAlignCritic",
+        "PreferForwardCritic",
+        "GoalAngleCritic",
+        "OscillationCritic",
+        "TwirlingCritic"
+      ]
+      BaseObstacleCritic:
+        cost_scaling_factor: 10.0
+        inflation_radius: 0.5
+      GoalCritic:
+        cost_scaling_factor: 5.0
+        threshold_to_consider_goal: 1.0
+      PathAlignCritic:
+        cost_scaling_factor: 20.0
+        max_path_occupancy_ratio: 0.2
+      PreferForwardCritic:
+        cost_scaling_factor: 5.0
+        max_allowed_final_deviation: 0.5
+      GoalAngleCritic:
+        cost_scaling_factor: 3.0
+        threshold_to_consider_angle: 0.5
+      OscillationCritic:
+        cost_scaling_factor: 10.0
+        oscillation_reset_angle: 0.3
+        oscillation_reset_time: 0.3
+        oscillation_distance: 0.1
+      TwirlingCritic:
+        cost_scaling_factor: 100.0
+
+# Behavior Tree Configuration
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors::Spin"
+      spin_dist: 1.57
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+      backup_dist: 0.30
+      backup_speed: 0.05
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+      drive_on_heading_timeout: 10.0
+    wait:
+      plugin: "nav2_behaviors::Wait"
+      wait_duration: 1.0
+
+# Waypoint Follower Configuration
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: true
+      waypoint_pause_duration: 200
+```
+
+### Humanoid Navigation Controller
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist, PoseStamped, PointStamped
+from nav_msgs.msg import Odometry, Path
+from sensor_msgs.msg import LaserScan, Imu
+from visualization_msgs.msg import Marker
+from tf2_ros import TransformListener, Buffer
+import tf2_ros
+import tf_transformations
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+import math
+
+
+class HumanoidNavigationController(Node):
+    """
+    Navigation controller specifically designed for humanoid robots.
+    """
+
+    def __init__(self):
+        super().__init__('humanoid_navigation_controller')
+
+        # Publishers
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.path_pub = self.create_publisher(Path, '/humanoid_path', 10)
+        self.marker_pub = self.create_publisher(Marker, '/navigation_marker', 10)
+
+        # Subscribers
+        self.odom_sub = self.create_subscription(
+            Odometry, '/visual_odom', self.odom_callback, 10)
+        self.path_sub = self.create_subscription(
+            Path, '/plan', self.path_callback, 10)
+        self.imu_sub = self.create_subscription(
+            Imu, '/imu/data', self.imu_callback, 10)
+        self.scan_sub = self.create_subscription(
+            LaserScan, '/scan', self.scan_callback, 10)
+
+        # TF
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # Internal state
+        self.current_pose = None
+        self.current_twist = None
+        self.current_imu = None
+        self.current_scan = None
+        self.navigation_path = []
+        self.current_waypoint_idx = 0
+        self.navigation_active = False
+
+        # Humanoid-specific parameters
+        self.max_linear_vel = 0.3  # m/s - slower for stability
+        self.max_angular_vel = 0.5  # rad/s
+        self.linear_tolerance = 0.2  # m
+        self.angular_tolerance = 0.1  # rad
+        self.foot_separation = 0.3  # distance between feet (m)
+        self.step_height = 0.05  # height of step (m)
+
+        # Walking state
+        self.left_foot_support = True  # Start with left foot support
+        self.step_phase = 0.0  # 0.0 to 1.0 for step cycle
+        self.walk_cycle_time = 1.0  # seconds per step
+
+        # Timers
+        self.control_timer = self.create_timer(0.05, self.control_loop)  # 20Hz control
+        self.walk_timer = self.create_timer(0.01, self.walk_cycle_update)  # 100Hz walking
+
+        self.get_logger().info('Humanoid Navigation Controller initialized')
+
+    def odom_callback(self, msg):
+        """Handle odometry updates."""
+        self.current_pose = msg.pose.pose
+        self.current_twist = msg.twist.twist
+
+    def path_callback(self, msg):
+        """Handle navigation path updates."""
+        self.navigation_path = msg.poses
+        self.current_waypoint_idx = 0
+        self.navigation_active = len(self.navigation_path) > 0
+        self.get_logger().info(f'New path received with {len(self.navigation_path)} waypoints')
+
+    def imu_callback(self, msg):
+        """Handle IMU updates."""
+        self.current_imu = msg
+
+    def scan_callback(self, msg):
+        """Handle laser scan updates."""
+        self.current_scan = msg
+
+    def control_loop(self):
+        """Main navigation control loop."""
+        if not self.navigation_active or not self.current_pose:
+            return
+
+        if self.current_waypoint_idx >= len(self.navigation_path):
+            # Reached the end of the path
+            self.stop_navigation()
+            return
+
+        # Get current target waypoint
+        target_pose = self.navigation_path[self.current_waypoint_idx].pose
+
+        # Calculate distance to target
+        dx = target_pose.position.x - self.current_pose.position.x
+        dy = target_pose.position.y - self.current_pose.position.y
+        distance_to_target = math.sqrt(dx*dx + dy*dy)
+
+        # Check if we've reached the current waypoint
+        if distance_to_target < self.linear_tolerance:
+            self.current_waypoint_idx += 1
+            if self.current_waypoint_idx >= len(self.navigation_path):
+                self.stop_navigation()
+                return
+            # Get the next target
+            target_pose = self.navigation_path[self.current_waypoint_idx].pose
+            dx = target_pose.position.x - self.current_pose.position.x
+            dy = target_pose.position.y - self.current_pose.position.y
+            distance_to_target = math.sqrt(dx*dx + dy*dy)
+
+        # Calculate desired heading
+        desired_heading = math.atan2(dy, dx)
+
+        # Get current heading from orientation
+        current_quat = [
+            self.current_pose.orientation.x,
+            self.current_pose.orientation.y,
+            self.current_pose.orientation.z,
+            self.current_pose.orientation.w
+        ]
+        current_euler = tf_transformations.euler_from_quaternion(current_quat)
+        current_heading = current_euler[2]
+
+        # Calculate heading error
+        heading_error = desired_heading - current_heading
+        # Normalize to [-pi, pi]
+        while heading_error > math.pi:
+            heading_error -= 2 * math.pi
+        while heading_error < -math.pi:
+            heading_error += 2 * math.pi
+
+        # Check for obstacles
+        safe_to_proceed = self.check_path_clear()
+
+        if not safe_to_proceed:
+            # Stop if path is blocked
+            cmd_vel = Twist()
+            cmd_vel.linear.x = 0.0
+            cmd_vel.angular.z = 0.0
+            self.cmd_vel_pub.publish(cmd_vel)
+            self.get_logger().warn('Path blocked by obstacle, stopping')
+            return
+
+        # Generate velocity commands
+        cmd_vel = Twist()
+
+        # Adjust linear velocity based on heading error
+        if abs(heading_error) > 0.3:  # If heading is significantly off, turn in place
+            cmd_vel.linear.x = 0.0
+            cmd_vel.angular.z = max(min(heading_error * 0.5, self.max_angular_vel), -self.max_angular_vel)
+        else:
+            # Move forward with angular correction
+            cmd_vel.linear.x = max(min(distance_to_target * 0.5, self.max_linear_vel), 0.0)
+            cmd_vel.angular.z = max(min(heading_error * 1.0, self.max_angular_vel), -self.max_angular_vel)
+
+        # Publish command
+        self.cmd_vel_pub.publish(cmd_vel)
+
+        # Publish visualization marker
+        self.publish_target_marker(target_pose)
+
+    def check_path_clear(self):
+        """Check if the path ahead is clear of obstacles."""
+        if not self.current_scan or not self.current_pose:
+            return True  # Assume clear if no scan data
+
+        # Check if any obstacles are within the path corridor
+        # This is a simplified check - in practice, you'd check along the path
+        min_distance = float('inf')
+        for i, range_val in enumerate(self.current_scan.ranges):
+            if not (math.isnan(range_val) or range_val > self.current_scan.range_max):
+                if range_val < min_distance:
+                    min_distance = range_val
+
+        # If minimum distance is too close, path is blocked
+        return min_distance > 0.5  # 50cm clearance threshold
+
+    def walk_cycle_update(self):
+        """Update walking cycle for humanoid gait."""
+        if not self.navigation_active:
+            return
+
+        # Update step phase (0.0 to 1.0)
+        self.step_phase += 0.01 / self.walk_cycle_time  # 0.01s per update
+        if self.step_phase > 1.0:
+            self.step_phase -= 1.0
+            # Switch support foot
+            self.left_foot_support = not self.left_foot_support
+
+    def stop_navigation(self):
+        """Stop navigation and halt the robot."""
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.angular.z = 0.0
+        self.cmd_vel_pub.publish(cmd_vel)
+        self.navigation_active = False
+        self.get_logger().info('Navigation stopped')
+
+    def publish_target_marker(self, target_pose):
+        """Publish visualization marker for target."""
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "navigation"
+        marker.id = 0
+        marker.type = Marker.SPHERE
+        marker.action = Marker.ADD
+        marker.pose = target_pose
+        marker.scale.x = 0.3
+        marker.scale.y = 0.3
+        marker.scale.z = 0.3
+        marker.color.a = 1.0
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        self.marker_pub.publish(marker)
+
+    def set_navigation_goal(self, x, y, theta=0.0):
+        """Set a navigation goal."""
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.header.frame_id = "map"
+        goal_msg.pose.position.x = x
+        goal_msg.pose.position.y = y
+        goal_msg.pose.position.z = 0.0
+
+        quat = tf_transformations.quaternion_from_euler(0, 0, theta)
+        goal_msg.pose.orientation.x = quat[0]
+        goal_msg.pose.orientation.y = quat[1]
+        goal_msg.pose.orientation.z = quat[2]
+        goal_msg.pose.orientation.w = quat[3]
+
+        # This would typically go to the navigation action server
+        # For this example, we'll just log it
+        self.get_logger().info(f'Setting navigation goal to ({x}, {y})')
+
+
+def main(args=None):
+    """Main function to run the humanoid navigation controller."""
+    rclpy.init(args=args)
+
+    controller = HumanoidNavigationController()
+
+    try:
+        rclpy.spin(controller)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![VSLAM Navigation Architecture](/img/diagrams/vslam-navigation-architecture.png)
+
+*Figure 1: Architecture of the VSLAM and navigation system for humanoid robots, showing the integration between Isaac ROS visual processing, Nav2 navigation stack, and humanoid-specific controllers.*
+
+## Hands-On Lab
+
+### Exercise 1: VSLAM Integration
+Integrate VSLAM with the navigation system:
+
+1. Set up Isaac ROS VSLAM components with stereo cameras
+2. Configure the VSLAM node to process visual data
+3. Integrate visual odometry with IMU data
+4. Test the VSLAM system in a simulated environment
+5. Validate that the robot can localize itself using visual features
+
+### Exercise 2: Humanoid Navigation Tuning
+Tune navigation parameters for humanoid-specific locomotion:
+
+1. Configure Nav2 costmaps for humanoid dimensions
+2. Adjust path planners for bipedal walking constraints
+3. Tune velocity controllers for stable walking
+4. Test navigation performance in various environments
+5. Evaluate path execution accuracy and stability
+
+### Exercise 3: Obstacle Avoidance
+Implement obstacle avoidance for humanoid navigation:
+
+1. Set up laser scanner and depth camera integration
+2. Configure costmaps to incorporate 3D obstacle data
+3. Implement recovery behaviors for humanoid robots
+4. Test navigation around dynamic obstacles
+5. Evaluate the effectiveness of obstacle avoidance
+
+## Troubleshooting
+
+Common VSLAM and navigation issues and solutions:
+
+- **Issue: Drift in VSLAM**: Increase feature tracking density, use IMU integration, or implement loop closure detection.
+- **Issue: Navigation failures**: Adjust costmap parameters, tune controller gains, or improve localization accuracy.
+- **Issue: Unstable walking during navigation**: Reduce velocity commands, improve balance control, or use more conservative parameters.
+- **Issue: Poor performance in low-texture environments**: Add additional sensors (LiDAR) or use direct methods for visual odometry.
+
+## Summary
+
+This chapter covered the integration of VSLAM with navigation for humanoid robots using Isaac ROS and Nav2. We explored the unique challenges of humanoid navigation, implemented VSLAM algorithms, and configured the Nav2 stack for bipedal locomotion. The combination of visual perception and navigation capabilities enables autonomous humanoid robots to operate in unknown environments.
+
+## Further Reading
+
+- Isaac ROS Visual SLAM Documentation
+- Nav2 for Humanoid Robots
+- Visual-Inertial Odometry for Legged Robots
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a loop closure detection system for the VSLAM pipeline.
+2. Create a humanoid-specific path planner that considers footstep constraints.
+3. Develop a multi-sensor fusion approach combining VSLAM, LiDAR, and IMU data.
+
+<!-- Optional: Add custom components for interactive elements -->

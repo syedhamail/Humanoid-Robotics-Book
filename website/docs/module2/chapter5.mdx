@@ -1,0 +1,657 @@
+---
+title: High-Fidelity Robot Rendering in Unity
+description: Creating realistic robot visualization and rendering in Unity for humanoid robotics simulation
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Set up Unity for high-fidelity robot visualization
+- Create realistic materials and shaders for robot components
+- Implement proper lighting and environment rendering
+- Optimize rendering performance for real-time simulation
+- Integrate Unity with ROS 2 for synchronized visualization
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Modules 1 and 2, Chapters 1-4
+- Understand 3D graphics concepts and Unity basics
+- Be familiar with robot kinematics and URDF descriptions
+- Have experience with ROS 2 message types for visualization
+
+## Introduction
+
+High-fidelity robot rendering in Unity provides photorealistic visualization capabilities that complement physics simulation in environments like Gazebo. Unity's advanced rendering pipeline, including physically-based rendering (PBR), real-time lighting, and post-processing effects, enables the creation of visually compelling robot simulations that can be used for presentation, debugging, and even synthetic data generation for machine learning.
+
+For humanoid robotics, Unity visualization offers several advantages:
+- **Photorealistic rendering**: High-quality materials, lighting, and shadows
+- **Advanced visual effects**: Reflections, refractions, and atmospheric effects
+- **Flexible camera systems**: Multiple viewpoints and cinematic shots
+- **Animation capabilities**: Complex character animation and blending
+- **VR/AR support**: Immersive teleoperation and visualization
+
+Unity's rendering pipeline consists of several key components:
+- **Materials and Shaders**: Define surface appearance and lighting response
+- **Lighting System**: Global illumination, reflections, and shadows
+- **Cameras**: Multiple viewpoints and perspective control
+- **Post-processing**: Effects like bloom, depth of field, and color grading
+- **Particle Systems**: For environmental effects and debugging visualization
+
+## Core Concepts
+
+### Unity Rendering Pipeline
+
+Unity's rendering pipeline processes:
+- **Geometry**: Robot mesh data and transformations
+- **Materials**: Surface properties and shader programs
+- **Lighting**: Direct and indirect illumination calculations
+- **Shadows**: Shadow casting and receiving
+- **Post-processing**: Screen-space effects and color correction
+
+### PBR Materials for Robots
+
+Physically-Based Rendering (PBR) materials for robots include:
+- **Albedo/Diffuse**: Base color of the surface
+- **Normal Map**: Surface detail and micro-geometry
+- **Metallic**: Reflectivity of metallic surfaces
+- **Smoothness/Roughness**: Surface roughness affecting specular highlights
+- **Occlusion**: Ambient occlusion for shadowed areas
+- **Emission**: Self-illuminating surfaces (LEDs, displays)
+
+### Robot Visualization Challenges
+
+Specific challenges for robot visualization:
+- **Complex articulation**: Handling articulated parts with proper skinning
+- **Hardware accuracy**: Matching visual appearance to physical robots
+- **Real-time constraints**: Balancing quality with performance
+- **Kinematic synchronization**: Aligning visual and physical models
+- **Sensor visualization**: Showing sensor data overlay and fields of view
+
+### Performance Optimization
+
+Techniques for optimizing robot rendering:
+- **LOD (Level of Detail)**: Different mesh complexities at different distances
+- **Occlusion Culling**: Not rendering objects not visible to camera
+- **Texture Atlasing**: Combining textures to reduce draw calls
+- **Shader Optimization**: Efficient shader code for mobile/desktop targets
+- **Instancing**: Rendering multiple copies efficiently
+
+## Code Examples
+
+### Unity Robot Visualization Script
+
+```csharp
+using UnityEngine;
+using System.Collections.Generic;
+using System.Linq;
+
+public class RobotVisualizer : MonoBehaviour
+{
+    [System.Serializable]
+    public class JointMapping
+    {
+        public string jointName;
+        public Transform jointTransform;
+    }
+
+    [Header("Robot Configuration")]
+    public List<JointMapping> jointMappings = new List<JointMapping>();
+    public float interpolationSpeed = 10f;
+
+    [Header("Visualization Settings")]
+    public bool showSensorFOV = true;
+    public bool showJointAxes = true;
+    public Color robotColor = Color.gray;
+
+    private Dictionary<string, Transform> jointMap;
+    private Dictionary<string, float> targetPositions;
+    private Dictionary<string, float> currentPositions;
+
+    void Start()
+    {
+        InitializeJointMap();
+        targetPositions = new Dictionary<string, float>();
+        currentPositions = new Dictionary<string, float>();
+
+        foreach (var mapping in jointMappings)
+        {
+            targetPositions[mapping.jointName] = mapping.jointTransform.localEulerAngles.z;
+            currentPositions[mapping.jointName] = mapping.jointTransform.localEulerAngles.z;
+        }
+    }
+
+    void InitializeJointMap()
+    {
+        jointMap = new Dictionary<string, Transform>();
+        foreach (var mapping in jointMappings)
+        {
+            jointMap[mapping.jointName] = mapping.jointTransform;
+        }
+    }
+
+    public void SetJointPosition(string jointName, float position)
+    {
+        if (targetPositions.ContainsKey(jointName))
+        {
+            targetPositions[jointName] = position;
+        }
+    }
+
+    public void SetMultipleJointPositions(Dictionary<string, float> positions)
+    {
+        foreach (var kvp in positions)
+        {
+            if (targetPositions.ContainsKey(kvp.Key))
+            {
+                targetPositions[kvp.Key] = kvp.Value;
+            }
+        }
+    }
+
+    void Update()
+    {
+        InterpolateToTargetPositions();
+        UpdateVisualizationEffects();
+    }
+
+    void InterpolateToTargetPositions()
+    {
+        foreach (var jointName in targetPositions.Keys.ToList())
+        {
+            if (jointMap.ContainsKey(jointName))
+            {
+                float current = currentPositions[jointName];
+                float target = targetPositions[jointName];
+
+                // Interpolate toward target position
+                float newPosition = Mathf.Lerp(current, target, Time.deltaTime * interpolationSpeed);
+                currentPositions[jointName] = newPosition;
+
+                // Apply rotation to joint transform
+                var transform = jointMap[jointName];
+                var eulers = transform.localEulerAngles;
+                eulers.z = newPosition * Mathf.Rad2Deg; // Convert radians to degrees
+                transform.localEulerAngles = eulers;
+            }
+        }
+    }
+
+    void UpdateVisualizationEffects()
+    {
+        if (showJointAxes)
+        {
+            DrawJointAxes();
+        }
+    }
+
+    void DrawJointAxes()
+    {
+        foreach (var mapping in jointMappings)
+        {
+            Vector3 worldPos = mapping.jointTransform.position;
+            Vector3 axisEnd = worldPos + mapping.jointTransform.forward * 0.1f;
+            Debug.DrawLine(worldPos, axisEnd, Color.red, Time.deltaTime);
+        }
+    }
+
+    public void HighlightJoint(string jointName, Color highlightColor)
+    {
+        if (jointMap.ContainsKey(jointName))
+        {
+            var renderer = jointMap[jointName].GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.material.SetColor("_EmissionColor", highlightColor);
+            }
+        }
+    }
+
+    public void ResetJointHighlight(string jointName)
+    {
+        if (jointMap.ContainsKey(jointName))
+        {
+            var renderer = jointMap[jointName].GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                renderer.material.SetColor("_EmissionColor", Color.black);
+            }
+        }
+    }
+}
+```
+
+### ROS 2 Unity Bridge Node
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped, PointStamped
+from std_msgs.msg import ColorRGBA, Float32
+from builtin_interfaces.msg import Time
+import socket
+import json
+import threading
+import time
+
+
+class UnityBridgeNode(Node):
+    """
+    Bridge node for synchronizing ROS 2 joint states with Unity visualization.
+    """
+
+    def __init__(self):
+        super().__init__('unity_bridge_node')
+
+        # Subscription to joint states
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        # Publishers for Unity visualization
+        self.unity_joint_pub = self.create_publisher(
+            JointState,
+            '/Unity/joint_targets',
+            10
+        )
+
+        # Timer for sending data to Unity
+        self.bridge_timer = self.create_timer(0.033, self.send_to_unity)  # ~30Hz
+
+        # Internal state
+        self.current_joint_positions = {}
+        self.unity_connection = None
+        self.lock = threading.Lock()
+
+        # Unity connection parameters
+        self.unity_host = 'localhost'
+        self.unity_port = 5555
+
+        # Initialize Unity connection
+        self.connect_to_unity()
+
+        self.get_logger().info('Unity Bridge Node initialized')
+
+    def connect_to_unity(self):
+        """Connect to Unity via TCP socket."""
+        try:
+            self.unity_connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.unity_connection.connect((self.unity_host, self.unity_port))
+            self.get_logger().info(f'Connected to Unity at {self.unity_host}:{self.unity_port}')
+        except Exception as e:
+            self.get_logger().error(f'Failed to connect to Unity: {e}')
+
+    def joint_state_callback(self, msg):
+        """Update joint positions from ROS 2 JointState message."""
+        with self.lock:
+            for i, name in enumerate(msg.name):
+                if i < len(msg.position):
+                    self.current_joint_positions[name] = msg.position[i]
+
+    def send_to_unity(self):
+        """Send joint positions to Unity."""
+        if not self.unity_connection:
+            return
+
+        with self.lock:
+            # Prepare data for Unity
+            unity_data = {
+                'timestamp': self.get_clock().now().nanoseconds / 1e9,
+                'joint_positions': dict(self.current_joint_positions),
+                'robot_name': 'humanoid_robot'
+            }
+
+            try:
+                # Send JSON data to Unity
+                json_data = json.dumps(unity_data).encode('utf-8')
+                self.unity_connection.send(json_data + b'/n')
+            except Exception as e:
+                self.get_logger().warn(f'Failed to send data to Unity: {e}')
+
+    def destroy_node(self):
+        """Clean up Unity connection."""
+        if self.unity_connection:
+            self.unity_connection.close()
+        super().destroy_node()
+
+
+class UnityVisualizationController(Node):
+    """
+    Controller for Unity visualization effects and overlays.
+    """
+
+    def __init__(self):
+        super().__init__('unity_vis_controller')
+
+        # Subscriptions for visualization triggers
+        self.sensor_data_sub = self.create_subscription(
+            PointStamped,
+            '/sensor_point_cloud',
+            self.sensor_data_callback,
+            10
+        )
+
+        self.path_sub = self.create_subscription(
+            PoseStamped,
+            '/robot_path',
+            self.path_callback,
+            10
+        )
+
+        # Publisher for Unity visualization commands
+        self.vis_cmd_pub = self.create_publisher(
+            String,
+            '/Unity/visualization_cmd',
+            10
+        )
+
+        # Timer for visualization updates
+        self.vis_timer = self.create_timer(0.1, self.update_visualization)
+
+        # Visualization state
+        self.visualization_state = {
+            'show_lidar_points': True,
+            'show_path': True,
+            'highlight_active_joints': True,
+            'render_reflections': True
+        }
+
+        self.get_logger().info('Unity Visualization Controller initialized')
+
+    def sensor_data_callback(self, msg):
+        """Process sensor data for visualization."""
+        # In a real implementation, this would send sensor data to Unity
+        # for visualization (point clouds, camera feeds, etc.)
+        pass
+
+    def path_callback(self, msg):
+        """Process path data for visualization."""
+        # Send path visualization commands to Unity
+        cmd_msg = String()
+        cmd_msg.data = f"draw_path:{msg.pose.position.x},{msg.pose.position.y},{msg.pose.position.z}"
+        self.vis_cmd_pub.publish(cmd_msg)
+
+    def update_visualization(self):
+        """Update visualization parameters in Unity."""
+        # Send visualization state updates to Unity
+        for param, value in self.visualization_state.items():
+            cmd_msg = String()
+            cmd_msg.data = f"{param}:{str(value).lower()}"
+            self.vis_cmd_pub.publish(cmd_msg)
+
+    def enable_sensor_visualization(self, sensor_type, enable=True):
+        """Enable/disable specific sensor visualizations."""
+        cmd_msg = String()
+        cmd_msg.data = f"enable_{sensor_type}_vis:{str(enable).lower()}"
+        self.vis_cmd_pub.publish(cmd_msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    unity_bridge = UnityBridgeNode()
+    vis_controller = UnityVisualizationController()
+
+    # Use MultiThreadedExecutor to handle both nodes
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(unity_bridge)
+    executor.add_node(vis_controller)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        unity_bridge.destroy_node()
+        vis_controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Unity Material Configuration Script
+
+```csharp
+using UnityEngine;
+using System.Collections.Generic;
+
+public class RobotMaterialManager : MonoBehaviour
+{
+    [System.Serializable]
+    public class MaterialMapping
+    {
+        public string componentName;  // e.g., "torso", "arm", "head"
+        public Material material;
+    }
+
+    [Header("Material Configuration")]
+    public List<MaterialMapping> materialMappings = new List<MaterialMapping>();
+    public Color baseRobotColor = Color.gray;
+    public float metallicValue = 0.7f;
+    public float smoothnessValue = 0.5f;
+
+    [Header("Dynamic Materials")]
+    public Material emissiveMaterial;  // For LEDs and displays
+    public Material transparentMaterial;  // For cameras and sensors
+
+    private Dictionary<string, Material> materialMap;
+    private Dictionary<Renderer, Material> originalMaterials;
+
+    void Start()
+    {
+        InitializeMaterialMap();
+        StoreOriginalMaterials();
+        ApplyBaseMaterials();
+    }
+
+    void InitializeMaterialMap()
+    {
+        materialMap = new Dictionary<string, Material>();
+        foreach (var mapping in materialMappings)
+        {
+            materialMap[mapping.componentName] = mapping.material;
+        }
+    }
+
+    void StoreOriginalMaterials()
+    {
+        originalMaterials = new Dictionary<Renderer, Material>();
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            originalMaterials[renderer] = renderer.sharedMaterials[0];
+        }
+    }
+
+    void ApplyBaseMaterials()
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            string componentName = DetermineComponentName(renderer.gameObject.name);
+
+            if (materialMap.ContainsKey(componentName))
+            {
+                renderer.material = materialMap[componentName];
+            }
+            else
+            {
+                // Apply default robot material
+                ApplyDefaultRobotMaterial(renderer);
+            }
+        }
+    }
+
+    string DetermineComponentName(string gameObjectName)
+    {
+        // Extract component name from game object name
+        string lowerName = gameObjectName.ToLower();
+
+        if (lowerName.Contains("torso") || lowerName.Contains("body"))
+            return "torso";
+        if (lowerName.Contains("arm") || lowerName.Contains("shoulder") || lowerName.Contains("elbow") || lowerName.Contains("wrist"))
+            return "arm";
+        if (lowerName.Contains("leg") || lowerName.Contains("hip") || lowerName.Contains("knee") || lowerName.Contains("ankle"))
+            return "leg";
+        if (lowerName.Contains("head") || lowerName.Contains("face"))
+            return "head";
+        if (lowerName.Contains("sensor") || lowerName.Contains("camera") || lowerName.Contains("lidar"))
+            return "sensor";
+
+        return "default";
+    }
+
+    void ApplyDefaultRobotMaterial(Renderer renderer)
+    {
+        Material newMaterial = new Material(Shader.Find("Standard"));
+        newMaterial.color = baseRobotColor;
+        newMaterial.SetFloat("_Metallic", metallicValue);
+        newMaterial.SetFloat("_Smoothness", smoothnessValue);
+        renderer.material = newMaterial;
+    }
+
+    public void SetRobotColor(Color newColor)
+    {
+        baseRobotColor = newColor;
+        ApplyBaseMaterials();
+    }
+
+    public void HighlightComponent(string componentName, Color highlightColor)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            string compName = DetermineComponentName(renderer.gameObject.name);
+            if (compName == componentName.ToLower())
+            {
+                Material mat = renderer.material;
+                mat.SetColor("_EmissionColor", highlightColor);
+                mat.SetFloat("_EmissionIntensity", 1.0f);
+            }
+        }
+    }
+
+    public void ResetComponentHighlight(string componentName)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            string compName = DetermineComponentName(renderer.gameObject.name);
+            if (compName == componentName.ToLower())
+            {
+                Material mat = renderer.material;
+                mat.SetColor("_EmissionColor", Color.black);
+                mat.SetFloat("_EmissionIntensity", 0.0f);
+            }
+        }
+    }
+
+    public void SetComponentMaterial(string componentName, Material newMaterial)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            string compName = DetermineComponentName(renderer.gameObject.name);
+            if (compName == componentName.ToLower())
+            {
+                renderer.material = newMaterial;
+            }
+        }
+    }
+
+    public void EnableSensorVisualization(bool enable)
+    {
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+
+        foreach (Renderer renderer in renderers)
+        {
+            string compName = DetermineComponentName(renderer.gameObject.name);
+            if (compName.Contains("sensor"))
+            {
+                renderer.enabled = enable;
+            }
+        }
+    }
+}
+```
+
+## Diagrams and Visuals
+
+![Unity Rendering Pipeline](/img/diagrams/Unity-rendering-pipeline.png)
+
+*Figure 1: Unity's rendering pipeline showing the flow from robot mesh data through materials and lighting to final screen output.*
+
+## Hands-On Lab
+
+### Exercise 1: Basic Robot Visualization
+Create a simple Unity scene with a humanoid robot model:
+
+1. Import a basic humanoid robot model (or create simple geometric shapes)
+2. Set up proper joint hierarchy and transformations
+3. Apply PBR materials with realistic properties
+4. Create a basic animation controller for simple movements
+5. Test real-time rendering performance
+
+### Exercise 2: ROS 2 Integration
+Implement the ROS 2 to Unity bridge:
+
+1. Create a TCP server in Unity to receive joint state data
+2. Implement the Python ROS 2 node to send joint positions
+3. Synchronize robot pose between ROS 2 and Unity
+4. Add visualization effects based on sensor data
+5. Optimize the communication for real-time performance
+
+### Exercise 3: Advanced Materials and Effects
+Enhance the robot visualization with advanced features:
+
+1. Create realistic materials for different robot components (metallic surfaces, rubber feet, LED indicators)
+2. Implement dynamic lighting that responds to robot movement
+3. Add post-processing effects for enhanced visual quality
+4. Create sensor visualization overlays (LiDAR point clouds, camera feeds)
+5. Implement reflection probes for realistic environmental reflections
+
+## Troubleshooting
+
+Common Unity visualization issues and solutions:
+
+- **Issue: Robot joints not moving in Unity**: Check that joint names match between URDF and Unity, and verify that the ROS 2 bridge is properly sending joint positions.
+- **Issue: Poor rendering performance**: Use LOD groups, reduce polygon count, optimize materials, and implement occlusion culling.
+- **Issue: Synchronization lag between ROS 2 and Unity**: Increase the bridge update rate or implement interpolation for smoother motion.
+- **Issue: Materials not appearing correctly**: Verify that shaders are compatible with your Unity render pipeline and that texture coordinates are correct.
+
+## Summary
+
+This chapter covered the fundamentals of creating high-fidelity robot visualization in Unity. We explored how to set up proper materials and shaders, optimize rendering performance, and integrate Unity with ROS 2 for synchronized visualization. Unity's advanced rendering capabilities make it an excellent tool for creating photorealistic robot simulations that can be used for presentation, debugging, and synthetic data generation.
+
+## Further Reading
+
+- Unity Manual: Rendering Pipeline
+- Unity PBR Materials Guide
+- ROS 2 Unity Integration Best Practices
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a Unity visualization that supports multiple robots simultaneously.
+2. Create a shader that simulates wear and tear on robot surfaces based on usage statistics.
+3. Design a Unity scene that visualizes robot internal states (battery level, joint temperatures, etc.) through color coding and animations.
+
+<!-- Optional: Add custom components for interactive elements -->

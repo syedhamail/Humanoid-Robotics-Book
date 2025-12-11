@@ -1,0 +1,37 @@
+.features {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 2rem 0;
+  width: 100%;
+}
+
+/* The wrapper that controls SVG size */
+.iconBox {
+  width: 130px;
+  height: 130px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Target INNER <svg> rendered by Docusaurus */
+.iconBox :global(svg) {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  display: block;
+}
+
+/* Title styles */
+h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+/* Paragraph styles */
+p {
+  font-size: 0.95rem;
+}

@@ -208,3 +208,10 @@ Wait for consent; never auto-create ADRs. Group related decisions (stacks, authe
 
 ## Code Standards
 See `.specify/memory/constitution.md` for code quality, testing, performance, security, and architecture principles.
+
+## Active Technologies
+- Python 3.10+, ROS 2 Humble/Iron, NodeJS 16/18 (for Docusaurus) + OpenAI Whisper, GPT multimodal models, ROS 2 Behavior Tree engine, Gazebo Fortress, Isaac Sim, Unity, Nav2, Isaac ROS, Docusaurus, GitHub Actions (004-vla-humanoid-robot)
+- Simulation logs, rosbag artifacts, test coverage reports, `references.bib` (APA format), `references/benchmarks.json` (004-vla-humanoid-robot)
+
+## Recent Changes
+- 004-vla-humanoid-robot: Added Python 3.10+, ROS 2 Humble/Iron, NodeJS 16/18 (for Docusaurus) + OpenAI Whisper, GPT multimodal models, ROS 2 Behavior Tree engine, Gazebo Fortress, Isaac Sim, Unity, Nav2, Isaac ROS, Docusaurus, GitHub Actions

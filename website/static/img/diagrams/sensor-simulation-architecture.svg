@@ -1,0 +1,53 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Sensor Simulation Architecture</text>
+
+  <!-- Real World -->
+  <rect x="50" y="80" width="700" height="100" fill="#ffebee" stroke="#d32f2f" stroke-width="2" rx="10"/>
+  <text x="400" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Real World Environment</text>
+  <text x="400" y="140" text-anchor="middle" font-family="Arial" font-size="12">Objects, Lighting, Dynamics</text>
+
+  <!-- Gazebo Simulation -->
+  <rect x="50" y="200" width="700" height="100" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="10"/>
+  <text x="400" y="240" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Gazebo Simulation Environment</text>
+  <text x="400" y="260" text-anchor="middle" font-family="Arial" font-size="12">Physics, Rendering, Sensor Models</text>
+
+  <!-- Sensor Types -->
+  <rect x="100" y="320" width="150" height="80" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="175" y="350" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold">Camera</text>
+  <text x="175" y="365" text-anchor="middle" font-family="Arial" font-size="10">RGB, Depth</text>
+
+  <rect x="270" y="320" width="150" height="80" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="345" y="350" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold">LiDAR</text>
+  <text x="345" y="365" text-anchor="middle" font-family="Arial" font-size="10">2D, 3D Scanning</text>
+
+  <rect x="440" y="320" width="150" height="80" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="515" y="350" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold">IMU</text>
+  <text x="515" y="365" text-anchor="middle" font-family="Arial" font-size="10">Inertial Measurement</text>
+
+  <rect x="610" y="320" width="150" height="80" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="685" y="350" text-anchor="middle" font-family="Arial" font-size="12" font-weight="bold">Force/Torque</text>
+  <text x="685" y="365" text-anchor="middle" font-family="Arial" font-size="10">Joint Feedback</text>
+
+  <!-- ROS 2 Bridge -->
+  <rect x="100" y="420" width="600" height="60" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="10"/>
+  <text x="400" y="450" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">ROS 2 Sensor Message Bridge</text>
+
+  <!-- Arrows showing data flow -->
+  <line x1="400" y1="180" x2="400" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="175" y1="300" x2="175" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="345" y1="300" x2="345" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="515" y1="300" x2="515" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="685" y1="300" x2="685" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="400" x2="400" y2="420" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Labels -->
+  <text x="50" y="480" text-anchor="start" font-family="Arial" font-size="10">Real Sensory Data → Simulated Sensor Data → ROS 2 Messages</text>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#000" />
+    </marker>
+  </defs>
+</svg>

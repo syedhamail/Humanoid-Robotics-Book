@@ -1,0 +1,76 @@
+{
+  "benchmarks": [
+    {
+      "name": "ROS 2 Arm Control Loop Latency",
+      "date": "2025-01-15",
+      "metric": "control_loop_latency",
+      "value": 50,
+      "unit": "ms",
+      "description": "Average latency for arm control command execution in ROS 2",
+      "environment": "Ubuntu 22.04, ROS 2 Humble, Intel i7-10700K, 32GB RAM"
+    },
+    {
+      "name": "Gazebo Physics Simulation FPS",
+      "date": "2025-01-15",
+      "metric": "simulation_fps",
+      "value": 60,
+      "unit": "fps",
+      "description": "Real-time factor maintained during humanoid physics simulation",
+      "environment": "Ubuntu 22.04, Gazebo Fortress, RTX 3070"
+    },
+    {
+      "name": "Isaac Sim USD Scene Load Time",
+      "date": "2025-01-15",
+      "metric": "scene_load_time",
+      "value": 15,
+      "unit": "s",
+      "description": "Time to load complex humanoid robot USD scene",
+      "environment": "Ubuntu 22.04, Isaac Sim 2022.2.1, RTX 4080"
+    },
+    {
+      "name": "VSLAM Tracking Accuracy",
+      "date": "2025-01-15",
+      "metric": "tracking_accuracy",
+      "value": 94.2,
+      "unit": "percent",
+      "description": "Visual SLAM position tracking accuracy in indoor environment",
+      "environment": "Isaac ROS VSLAM, controlled indoor environment"
+    },
+    {
+      "name": "Whisper Voice Recognition Accuracy",
+      "date": "2025-01-15",
+      "metric": "recognition_accuracy",
+      "value": 87.5,
+      "unit": "percent",
+      "description": "Speech-to-text accuracy for simple robot commands in quiet environment",
+      "environment": "OpenAI Whisper small.en model, controlled audio conditions"
+    },
+    {
+      "name": "LLM Cognitive Planning Response Time",
+      "date": "2025-01-15",
+      "metric": "planning_response_time",
+      "value": 2.3,
+      "unit": "s",
+      "description": "Average time for LLM to generate action plan from natural language command",
+      "environment": "OpenAI GPT-3.5-turbo API, simple navigation commands"
+    },
+    {
+      "name": "Multi-Modal Fusion Pipeline Latency",
+      "date": "2025-01-15",
+      "metric": "fusion_pipeline_latency",
+      "value": 120,
+      "unit": "ms",
+      "description": "End-to-end latency for multi-modal input processing and fusion",
+      "environment": "ROS 2 Humble, combined vision, speech, and gesture inputs"
+    },
+    {
+      "name": "Humanoid Navigation Success Rate",
+      "date": "2025-01-15",
+      "metric": "navigation_success_rate",
+      "value": 82.1,
+      "unit": "percent",
+      "description": "Success rate for humanoid robot navigation in dynamic environment",
+      "environment": "Nav2 with humanoid-specific path planning, simulated environment"
+    }
+  ]
+}

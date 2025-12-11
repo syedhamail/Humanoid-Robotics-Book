@@ -1,0 +1,538 @@
+---
+title: Connecting AI Agents → ROS Controllers
+description: Bridging artificial intelligence systems with ROS 2 robot controllers
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Connect AI agents to ROS 2 robot controllers
+- Implement interfaces between high-level AI planning and low-level control
+- Design communication protocols for AI-robot interaction
+- Create action servers for goal-oriented robot behaviors
+- Integrate perception systems with AI decision-making
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapters 1-5 on Physical AI, ROS 2 concepts, Python packages, URDF, and launch files
+- Understand ROS 2 topics, services, and actions
+- Have experience with AI/ML frameworks (TensorFlow, PyTorch, etc.)
+- Be familiar with behavioral trees or finite state machines
+
+## Introduction
+
+The integration of AI agents with ROS 2 controllers represents a critical aspect of modern robotics systems. This connection enables intelligent decision-making to be translated into physical robot actions, bridging the gap between high-level AI planning and low-level motor control. For humanoid robots, this connection is especially important as it enables complex behaviors like navigation, manipulation, and interaction based on AI-driven reasoning.
+
+The connection typically involves multiple layers:
+- High-level AI planning and reasoning
+- Behavioral layer for task decomposition
+- Action execution layer for ROS 2 communication
+- Low-level control for motor commands
+
+This chapter explores the patterns and best practices for creating robust connections between AI systems and ROS 2 robot controllers.
+
+## Core Concepts
+
+### AI-Agent to ROS Interface Layer
+
+The interface layer handles:
+- Message translation between AI and ROS formats
+- State synchronization between AI and robot
+- Action mapping from AI intentions to ROS commands
+- Error handling and recovery strategies
+
+### Action-Based Communication
+
+ROS 2 actions provide the ideal communication mechanism for goal-oriented behaviors:
+- Goals: AI system requests robot behavior
+- Feedback: Robot provides progress updates
+- Results: Robot reports completion or failure
+
+### State Management
+
+Critical for maintaining coherence between AI and robot:
+- Robot state estimation and tracking
+- Environmental state awareness
+- Task progress monitoring
+- Uncertainty quantification
+
+### Middleware Architecture
+
+The connection architecture includes:
+- Message brokers for decoupled communication
+- State managers for shared information
+- Behavior selectors for action choice
+- Safety monitors for constraint enforcement
+
+## Code Examples
+
+### Basic AI-ROS Bridge Node
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from nav2_msgs.action import NavigateToPose
+from std_msgs.msg import String
+import numpy as np
+import json
+
+
+class AIBridgeNode(Node):
+    """
+    Bridge between AI agents and ROS 2 controllers.
+    """
+
+    def __init__(self):
+        super().__init__('ai_bridge_node')
+
+        # Subscribe to AI intention messages
+        self.ai_intent_sub = self.create_subscription(
+            String,
+            'ai_intentions',
+            self.ai_intent_callback,
+            10
+        )
+
+        # Action client for navigation
+        self.nav_client = ActionClient(
+            self,
+            NavigateToPose,
+            'navigate_to_pose'
+        )
+
+        # Publisher for robot state updates
+        self.state_pub = self.create_publisher(
+            String,
+            'robot_state',
+            10
+        )
+
+        self.current_goal = None
+        self.robot_state = {'position': [0.0, 0.0, 0.0], 'battery': 100.0}
+
+    def ai_intent_callback(self, msg):
+        """Process AI intentions and convert to ROS actions."""
+        try:
+            intent_data = json.loads(msg.data)
+
+            if intent_data['action'] == 'navigate':
+                self.execute_navigation(intent_data['target'])
+            elif intent_data['action'] == 'manipulate':
+                self.execute_manipulation(intent_data['target'])
+            elif intent_data['action'] == 'perceive':
+                self.execute_perception(intent_data['target'])
+
+        except Exception as e:
+            self.get_logger().error(f'Error processing AI intent: {e}')
+
+    def execute_navigation(self, target_pose):
+        """Execute navigation action."""
+        goal_msg = NavigateToPose.Goal()
+        goal_msg.pose.header.frame_id = 'map'
+        goal_msg.pose.pose.position.x = target_pose['x']
+        goal_msg.pose.pose.position.y = target_pose['y']
+        goal_msg.pose.pose.orientation.w = 1.0
+
+        self.nav_client.wait_for_server()
+        future = self.nav_client.send_goal_async(goal_msg)
+        future.add_done_callback(self.navigation_done_callback)
+
+        self.current_goal = target_pose
+
+    def navigation_done_callback(self, future):
+        """Handle navigation completion."""
+        goal_handle = future.result()
+        result = goal_handle.get_result_async()
+        result.add_done_callback(self.navigation_result_callback)
+
+    def navigation_result_callback(self, future):
+        """Process navigation result."""
+        result = future.result().result
+        self.get_logger().info(f'Navigation completed: {result}')
+
+        # Update robot state
+        self.update_robot_state({'position': [self.current_goal['x'], self.current_goal['y'], 0.0]})
+
+        # Publish state update
+        state_msg = String()
+        state_msg.data = json.dumps(self.robot_state)
+        self.state_pub.publish(state_msg)
+
+    def update_robot_state(self, new_state):
+        """Update robot state with new information."""
+        self.robot_state.update(new_state)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    ai_bridge = AIBridgeNode()
+
+    try:
+        rclpy.spin(ai_bridge)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ai_bridge.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### AI Agent Simulator
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import time
+import random
+
+
+class AIAgentSimulator(Node):
+    """
+    Simulates an AI agent sending intentions to the robot.
+    """
+
+    def __init__(self):
+        super().__init__('ai_agent_simulator')
+
+        self.intention_pub = self.create_publisher(
+            String,
+            'ai_intentions',
+            10
+        )
+
+        # Timer to periodically send intentions
+        self.timer = self.create_timer(5.0, self.send_intention)
+
+        self.locations = [
+            {'x': 1.0, 'y': 1.0},
+            {'x': 2.0, 'y': 2.0},
+            {'x': 3.0, 'y': 1.0},
+            {'x': 1.0, 'y': 3.0}
+        ]
+
+        self.get_logger().info('AI Agent Simulator started')
+
+    def send_intention(self):
+        """Send a random navigation intention."""
+        target = random.choice(self.locations)
+
+        intention = {
+            'action': 'navigate',
+            'target': target,
+            'timestamp': time.time(),
+            'priority': 1
+        }
+
+        msg = String()
+        msg.data = json.dumps(intention)
+
+        self.intention_pub.publish(msg)
+        self.get_logger().info(f'Sent navigation intention to {target}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    ai_agent = AIAgentSimulator()
+
+    try:
+        rclpy.spin(ai_agent)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ai_agent.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Advanced AI-ROS Integration with Planning
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.action import ActionClient
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+import json
+from enum import Enum
+from typing import Dict, Any, Optional
+import asyncio
+
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AIBrainNode(Node):
+    """
+    Advanced AI brain that coordinates multiple robot behaviors.
+    """
+
+    def __init__(self):
+        super().__init__('ai_brain_node')
+
+        # QoS profile for reliable communication
+        qos_profile = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
+
+        # Publishers and subscribers
+        self.intention_sub = self.create_subscription(
+            String,
+            'high_level_intentions',
+            self.high_level_intent_callback,
+            qos_profile
+        )
+
+        self.task_status_pub = self.create_publisher(
+            String,
+            'task_status',
+            qos_profile
+        )
+
+        # Track active tasks
+        self.active_tasks: Dict[str, Dict[str, Any]] = {}
+
+        self.get_logger().info('AI Brain Node initialized')
+
+    def high_level_intent_callback(self, msg):
+        """Process high-level intentions and decompose into tasks."""
+        try:
+            intent_data = json.loads(msg.data)
+
+            # Decompose high-level intent into subtasks
+            subtasks = self.decompose_intent(intent_data)
+
+            # Schedule subtasks
+            for task in subtasks:
+                self.schedule_task(task)
+
+        except Exception as e:
+            self.get_logger().error(f'Error processing high-level intent: {e}')
+
+    def decompose_intent(self, intent_data) -> list:
+        """Decompose a high-level intent into executable tasks."""
+        intent_type = intent_data.get('intent_type', '')
+
+        if intent_type == 'patrol_area':
+            # Patrol area intent -> navigate to waypoints
+            waypoints = intent_data.get('waypoints', [])
+            tasks = []
+
+            for i, waypoint in enumerate(waypoints):
+                tasks.append({
+                    'id': f'navigate_to_waypoint_{i}',
+                    'type': 'navigation',
+                    'target': waypoint,
+                    'priority': 2
+                })
+
+            return tasks
+
+        elif intent_type == 'fetch_object':
+            # Fetch object intent -> navigate -> perceive -> grasp -> return
+            target_location = intent_data.get('target_location', {})
+            object_name = intent_data.get('object_name', '')
+
+            return [
+                {
+                    'id': 'navigate_to_object',
+                    'type': 'navigation',
+                    'target': target_location,
+                    'priority': 1
+                },
+                {
+                    'id': 'perceive_object',
+                    'type': 'perception',
+                    'target': object_name,
+                    'priority': 1
+                },
+                {
+                    'id': 'grasp_object',
+                    'type': 'manipulation',
+                    'target': object_name,
+                    'priority': 1
+                },
+                {
+                    'id': 'return_to_base',
+                    'type': 'navigation',
+                    'target': {'x': 0.0, 'y': 0.0},
+                    'priority': 1
+                }
+            ]
+
+        return []
+
+    def schedule_task(self, task: Dict[str, Any]):
+        """Schedule a task for execution."""
+        task_id = task['id']
+
+        # Add task to active tasks
+        self.active_tasks[task_id] = {
+            'task': task,
+            'status': TaskStatus.PENDING,
+            'start_time': self.get_clock().now().seconds_nanoseconds()[0]
+        }
+
+        # Execute task based on type
+        self.execute_task(task)
+
+    def execute_task(self, task: Dict[str, Any]):
+        """Execute a specific task."""
+        task_type = task.get('type', '')
+        self.get_logger().info(f'Executing task: {task["id"]} of type {task_type}')
+
+        # Update task status
+        if task['id'] in self.active_tasks:
+            self.active_tasks[task['id']]['status'] = TaskStatus.EXECUTING
+
+        # Execute based on task type
+        if task_type == 'navigation':
+            self.execute_navigation_task(task)
+        elif task_type == 'perception':
+            self.execute_perception_task(task)
+        elif task_type == 'manipulation':
+            self.execute_manipulation_task(task)
+
+        # Publish task status update
+        self.publish_task_status(task['id'])
+
+    def execute_navigation_task(self, task: Dict[str, Any]):
+        """Execute navigation task."""
+        # In a real implementation, this would send goals to navigation system
+        self.get_logger().info(f'Navigating to {task["target"]}')
+
+        # Simulate task completion after delay
+        timer = self.create_timer(2.0, lambda: self.complete_task(task['id']))
+
+    def execute_perception_task(self, task: Dict[str, Any]):
+        """Execute perception task."""
+        self.get_logger().info(f'Perceiving object: {task["target"]}')
+
+        # Simulate task completion after delay
+        timer = self.create_timer(1.5, lambda: self.complete_task(task['id']))
+
+    def execute_manipulation_task(self, task: Dict[str, Any]):
+        """Execute manipulation task."""
+        self.get_logger().info(f'Manipulating object: {task["target"]}')
+
+        # Simulate task completion after delay
+        timer = self.create_timer(3.0, lambda: self.complete_task(task['id']))
+
+    def complete_task(self, task_id: str):
+        """Mark a task as completed."""
+        if task_id in self.active_tasks:
+            self.active_tasks[task_id]['status'] = TaskStatus.COMPLETED
+            self.active_tasks[task_id]['end_time'] = self.get_clock().now().seconds_nanoseconds()[0]
+
+            self.get_logger().info(f'Task {task_id} completed')
+            self.publish_task_status(task_id)
+
+    def publish_task_status(self, task_id: str):
+        """Publish task status update."""
+        if task_id in self.active_tasks:
+            status_msg = String()
+            status_data = {
+                'task_id': task_id,
+                'status': self.active_tasks[task_id]['status'].value,
+                'timestamp': self.get_clock().now().seconds_nanoseconds()[0]
+            }
+            status_msg.data = json.dumps(status_data)
+
+            self.task_status_pub.publish(status_msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    ai_brain = AIBrainNode()
+
+    try:
+        rclpy.spin(ai_brain)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        ai_brain.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![AI-ROS Integration Architecture](/img/diagrams/ai-ros-integration-architecture.png)
+
+*Figure 1: Architecture showing the integration between AI agents and ROS 2 controllers with intermediate layers.*
+
+## Hands-On Lab
+
+### Exercise 1: Create a Simple AI-Controller Bridge
+Implement a basic bridge between a simulated AI agent and ROS 2 controllers:
+
+1. Create an AI simulator node that generates simple commands
+2. Implement a bridge node that translates AI commands to ROS actions
+3. Connect to a simulated robot controller
+4. Test the communication pathway with basic navigation tasks
+
+### Exercise 2: Advanced Task Planning Integration
+Extend the bridge with more sophisticated planning capabilities:
+
+1. Implement a task decomposition system for complex behaviors
+2. Add state tracking and monitoring capabilities
+3. Create a feedback loop for plan adjustment
+4. Test with multi-step tasks that require coordination
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Message format incompatibility**: Standardize message formats between AI and ROS systems using JSON or well-defined custom messages.
+- **Issue: Timing and synchronization problems**: Implement proper state management and use ROS 2's time facilities for synchronization.
+- **Issue: Communication delays affecting AI decisions**: Add buffering and prediction mechanisms to handle latency.
+- **Issue: Error propagation from robot to AI**: Implement robust error handling and recovery strategies at each interface layer.
+
+## Summary
+
+This chapter covered the integration of AI agents with ROS 2 robot controllers, focusing on creating robust communication pathways between high-level AI reasoning and low-level robot control. We explored different architectural patterns, implemented example bridges, and discussed best practices for maintaining coherent state between AI and robot systems. This integration is crucial for creating autonomous humanoid robots capable of complex, goal-directed behaviors.
+
+## Further Reading
+
+- ROS 2 Design: AI Integration Patterns
+- Behavior Trees for Robotics
+- Planning and Acting in Uncertain Environments
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Design and implement a bridge for a specific AI framework (e.g., TensorFlow, PyTorch) to ROS 2 controllers.
+2. Create a fault-tolerant AI-ROS interface that can handle communication failures gracefully.
+3. Implement a learning component that adapts AI-ROS mappings based on execution success/failure.
+
+<!-- Optional: Add custom components for interactive elements -->

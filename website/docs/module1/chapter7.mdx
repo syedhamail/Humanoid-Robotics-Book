@@ -1,0 +1,741 @@
+---
+title: "Lab: Build a ROS 2 Control Pipeline for a Humanoid Arm"
+description: Hands-on lab to create a complete control pipeline for a humanoid robot arm
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this lab, you will be able to:
+- Design and implement a complete ROS 2 control pipeline for a humanoid arm
+- Integrate perception, planning, and control components
+- Use ROS 2 actions for goal-oriented arm movements
+- Implement feedback control loops for precision
+- Test and validate the control pipeline in simulation
+
+## Prerequisites
+
+Before starting this lab, you should:
+- Have completed Chapters 1-6 on Physical AI, ROS 2 concepts, Python packages, URDF, launch files, and AI integration
+- Have a working ROS 2 Humble installation with Gazebo
+- Understand ROS 2 nodes, topics, services, and actions
+- Be familiar with URDF and robot modeling
+
+## Introduction
+
+In this lab, you'll build a complete control pipeline for a humanoid robot arm, integrating perception, planning, and control components. This pipeline will enable the arm to receive high-level goals (like "move to position X,Y,Z") and execute them using low-level joint control.
+
+The control pipeline consists of several interconnected components:
+- High-level goal interface (action server)
+- Motion planner for trajectory generation
+- Controller manager for joint control
+- Sensor feedback for state estimation
+- Safety monitors for constraint enforcement
+
+## Lab Setup
+
+### Required Files and Dependencies
+
+First, ensure you have the following structure in your workspace:
+
+```
+examples/module1_lab/ros2_arm_control/
+├── ros2_arm_control/           # Python package
+│   ├── __init__.py
+│   ├── arm_controller.py       # Main controller node
+│   ├── trajectory_planner.py   # Trajectory generation
+│   └── safety_monitor.py       # Safety checks
+├── URDF/
+│   └── humanoid_arm.URDF       # Robot description
+├── launch/
+│   └── arm_control_pipeline.launch.py
+├── config/
+│   └── arm_control_params.yaml
+├── CMakeLists.txt
+├── package.xml
+└── setup.py
+```
+
+### Install Dependencies
+
+```bash
+pip3 install transforms3d  # For 3D transformations
+sudo apt-get update
+sudo apt-get install ros-humble-joint-state-publisher ros-humble-robot-state-publisher
+```
+
+## Implementation Steps
+
+### Step 1: Create the Arm Controller Node
+
+First, let's create the main controller node that will handle the control pipeline:
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from rclpy.action import ActionServer, GoalResponse, CancelResponse
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
+
+from control_msgs.action import FollowJointTrajectory
+from sensor_msgs.msg import JointState
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from builtin_interfaces.msg import Duration
+import time
+import threading
+from collections import deque
+import numpy as np
+
+
+class ArmController(Node):
+    """
+    Complete control pipeline for humanoid arm.
+    Integrates perception, planning, and control.
+    """
+
+    def __init__(self):
+        super().__init__('arm_controller')
+
+        # Joint names for the humanoid arm
+        self.joint_names = [
+            'shoulder_pan_joint',
+            'shoulder_lift_joint',
+            'elbow_joint',
+            'wrist_flex_joint',
+            'wrist_roll_joint'
+        ]
+
+        # Current joint states
+        self.current_joint_states = {}
+        self.joint_state_lock = threading.RLock()
+
+        # Publishers and subscribers
+        self.joint_command_pub = self.create_publisher(
+            JointTrajectory,
+            '/joint_trajectory',
+            10
+        )
+
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        # Action server for arm control
+        self._action_server = ActionServer(
+            self,
+            FollowJointTrajectory,
+            'follow_joint_trajectory',
+            execute_callback=self.execute_trajectory,
+            goal_callback=self.goal_callback,
+            cancel_callback=self.cancel_callback,
+            callback_group=ReentrantCallbackGroup()
+        )
+
+        # Timer for control loop
+        self.control_timer = self.create_timer(0.02, self.control_loop)  # 50Hz
+
+        # Trajectory execution variables
+        self.current_trajectory = None
+        self.trajectory_active = False
+        self.trajectory_start_time = None
+
+        self.get_logger().info('Arm Controller initialized')
+
+    def joint_state_callback(self, msg):
+        """Update current joint states."""
+        with self.joint_state_lock:
+            for i, name in enumerate(msg.name):
+                if name in self.joint_names:
+                    self.current_joint_states[name] = {
+                        'position': msg.position[i],
+                        'velocity': msg.velocity[i] if i < len(msg.velocity) else 0.0,
+                        'effort': msg.effort[i] if i < len(msg.effort) else 0.0
+                    }
+
+    def goal_callback(self, goal_request):
+        """Accept or reject trajectory goals."""
+        self.get_logger().info('Received trajectory goal')
+
+        # Check if all joint names are valid
+        invalid_joints = [name for name in goal_request.trajectory.joint_names
+                         if name not in self.joint_names]
+
+        if invalid_joints:
+            self.get_logger().error(f'Invalid joint names: {invalid_joints}')
+            return GoalResponse.REJECT
+
+        return GoalResponse.ACCEPT
+
+    def cancel_callback(self, goal_handle):
+        """Handle goal cancellation."""
+        self.get_logger().info('Received cancel request')
+        return CancelResponse.ACCEPT
+
+    async def execute_trajectory(self, goal_handle):
+        """Execute the requested trajectory."""
+        self.get_logger().info('Executing trajectory...')
+
+        feedback_msg = FollowJointTrajectory.Feedback()
+        result = FollowJointTrajectory.Result()
+
+        # Store trajectory and mark as active
+        self.current_trajectory = goal_handle.request.trajectory
+        self.trajectory_active = True
+        self.trajectory_start_time = self.get_clock().now()
+
+        # Send trajectory to joint controller
+        self.joint_command_pub.publish(self.current_trajectory)
+
+        # Track execution progress
+        while self.trajectory_active:
+            # Update feedback
+            feedback_msg.joint_names = self.current_trajectory.joint_names
+
+            # Calculate progress
+            elapsed = (self.get_clock().now() - self.trajectory_start_time).nanoseconds / 1e9
+            total_duration = sum([pt.time_from_start.sec + pt.time_from_start.nanosec/1e9
+                                 for pt in self.current_trajectory.points])
+
+            feedback_msg.desired = self.current_trajectory.points[-1] if self.current_trajectory.points else JointTrajectoryPoint()
+            feedback_msg.actual = self.get_current_joint_state_msg()
+
+            # Check if trajectory is complete
+            if elapsed >= total_duration:
+                break
+
+            goal_handle.publish_feedback(feedback_msg)
+            time.sleep(0.05)  # 20Hz feedback
+
+        # Determine result
+        if not self.trajectory_active:
+            result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
+        else:
+            result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+
+        self.trajectory_active = False
+        self.current_trajectory = None
+
+        self.get_logger().info('Trajectory execution completed')
+        return result
+
+    def control_loop(self):
+        """Main control loop for safety monitoring and state updates."""
+        if not self.trajectory_active:
+            return
+
+        # Check for safety violations
+        with self.joint_state_lock:
+            for joint_name, state in self.current_joint_states.items():
+                pos = state['position']
+
+                # Example safety checks - in practice, use actual joint limits
+                if abs(pos) > 3.14:  # Excessive joint angle
+                    self.get_logger().error(f'Safety violation on {joint_name}: {pos}')
+                    self.trajectory_active = False
+                    break
+
+    def get_current_joint_state_msg(self):
+        """Get current joint state as trajectory point."""
+        with self.joint_state_lock:
+            point = JointTrajectoryPoint()
+            point.positions = []
+            point.velocities = []
+            point.accelerations = []
+
+            for joint_name in self.joint_names:
+                if joint_name in self.current_joint_states:
+                    state = self.current_joint_states[joint_name]
+                    point.positions.append(state['position'])
+                    point.velocities.append(state['velocity'])
+                    point.accelerations.append(0.0)  # Approximation
+                else:
+                    point.positions.append(0.0)
+                    point.velocities.append(0.0)
+                    point.accelerations.append(0.0)
+
+            point.time_from_start = Duration(sec=0, nanosec=0)
+            return point
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    arm_controller = ArmController()
+
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(arm_controller)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        arm_controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Step 2: Create a Trajectory Planner Component
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Point, Pose
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Header
+import numpy as np
+from scipy.interpolate import interp1d
+import time
+
+
+class TrajectoryPlanner(Node):
+    """
+    Plan smooth trajectories for arm movements.
+    """
+
+    def __init__(self):
+        super().__init__('trajectory_planner')
+
+        # Subscription to current joint states
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        # Publisher for planned trajectories
+        self.trajectory_pub = self.create_publisher(
+            JointTrajectory,
+            '/planned_trajectory',
+            10
+        )
+
+        # Service for planning to specific poses
+        from rclpy.service import Service
+        self.plan_to_pose_srv = self.create_service(
+            'plan_to_pose',
+            self.plan_to_pose_callback
+        )
+
+        self.current_joint_positions = {}
+        self.joint_names = [
+            'shoulder_pan_joint',
+            'shoulder_lift_joint',
+            'elbow_joint',
+            'wrist_flex_joint',
+            'wrist_roll_joint'
+        ]
+
+    def joint_state_callback(self, msg):
+        """Update current joint positions."""
+        for i, name in enumerate(msg.name):
+            if name in self.joint_names:
+                self.current_joint_positions[name] = msg.position[i]
+
+    def plan_to_pose_callback(self, request, response):
+        """Plan trajectory to reach a specific pose."""
+        target_pose = request.target_pose
+
+        # Get current joint configuration
+        current_positions = []
+        for joint_name in self.joint_names:
+            current_positions.append(self.current_joint_positions.get(joint_name, 0.0))
+
+        # Plan trajectory using linear interpolation in joint space
+        num_points = 50  # Number of trajectory points
+        duration = 5.0   # Total duration in seconds
+
+        # Create joint trajectory message
+        traj_msg = JointTrajectory()
+        traj_msg.joint_names = self.joint_names
+
+        # Generate smooth trajectory points
+        for i in range(num_points + 1):
+            ratio = i / num_points
+            point = JointTrajectoryPoint()
+
+            # Linear interpolation between current and target positions
+            for j, joint_name in enumerate(self.joint_names):
+                start_pos = current_positions[j]
+                target_pos = self.calculate_target_position(joint_name, target_pose)  # Simplified
+                interpolated_pos = start_pos + ratio * (target_pos - start_pos)
+
+                point.positions.append(interpolated_pos)
+                point.velocities.append(0.0)  # Will be calculated
+                point.accelerations.append(0.0)
+
+            # Calculate time from start using trapezoidal velocity profile
+            point.time_from_start.sec = int(duration * ratio)
+            point.time_from_start.nanosec = int((duration * ratio - int(duration * ratio)) * 1e9)
+
+            traj_msg.points.append(point)
+
+        # Smooth the velocities using finite differences
+        self.smooth_trajectory_velocities(traj_msg)
+
+        # Publish the planned trajectory
+        self.trajectory_pub.publish(traj_msg)
+
+        response.success = True
+        response.trajectory = traj_msg
+
+        return response
+
+    def calculate_target_position(self, joint_name, target_pose):
+        """Calculate target joint position for reaching target pose."""
+        # This is a simplified calculation
+        # In practice, this would involve inverse kinematics
+        if joint_name == 'shoulder_pan_joint':
+            return target_pose.position.y * 0.1  # Simplified mapping
+        elif joint_name == 'shoulder_lift_joint':
+            return target_pose.position.z * 0.1  # Simplified mapping
+        else:
+            return 0.0  # Default position
+
+    def smooth_trajectory_velocities(self, trajectory):
+        """Calculate smooth velocities for trajectory points."""
+        n_points = len(trajectory.points)
+
+        for i in range(n_points):
+            point = trajectory.points[i]
+
+            if i == 0:
+                # First point: estimate velocity based on next point
+                if n_points > 1:
+                    dt = self.get_time_difference(trajectory.points[1].time_from_start,
+                                                 trajectory.points[0].time_from_start)
+                    if dt > 0:
+                        for j in range(len(point.positions)):
+                            if j < len(trajectory.points[1].positions):
+                                point.velocities[j] = (trajectory.points[1].positions[j] - point.positions[j]) / dt
+            elif i == n_points - 1:
+                # Last point: estimate velocity based on previous point
+                dt = self.get_time_difference(point.time_from_start,
+                                             trajectory.points[i-1].time_from_start)
+                if dt > 0:
+                    for j in range(len(point.positions)):
+                        if j < len(trajectory.points[i-1].positions):
+                            point.velocities[j] = (point.positions[j] - trajectory.points[i-1].positions[j]) / dt
+            else:
+                # Middle points: central difference
+                dt_prev = self.get_time_difference(point.time_from_start,
+                                                  trajectory.points[i-1].time_from_start)
+                dt_next = self.get_time_difference(trajectory.points[i+1].time_from_start,
+                                                  point.time_from_start)
+
+                for j in range(len(point.positions)):
+                    if j < len(trajectory.points[i-1].positions) and j < len(trajectory.points[i+1].positions):
+                        vel = ((trajectory.points[i+1].positions[j] - trajectory.points[i-1].positions[j]) /
+                               (dt_prev + dt_next))
+                        point.velocities[j] = vel
+
+    def get_time_difference(self, time1, time2):
+        """Calculate time difference in seconds."""
+        return (time1.sec - time2.sec) + (time1.nanosec - time2.nanosec) / 1e9
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    planner = TrajectoryPlanner()
+
+    try:
+        rclpy.spin(planner)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        planner.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Step 3: Create a Safety Monitor Component
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState, Temperature
+from std_msgs.msg import Bool, Float64
+from builtin_interfaces.msg import Duration
+import threading
+
+
+class SafetyMonitor(Node):
+    """
+    Monitor robot state and enforce safety constraints.
+    """
+
+    def __init__(self):
+        super().__init__('safety_monitor')
+
+        # Parameters
+        self.declare_parameter('max_joint_temp', 70.0)  # Celsius
+        self.declare_parameter('max_motor_current', 10.0)  # Amps
+        self.declare_parameter('collision_threshold', 0.1)  # meters
+
+        # Subscriptions
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        self.temperature_sub = self.create_subscription(
+            Temperature,
+            '/joint_temperatures',
+            self.temperature_callback,
+            10
+        )
+
+        # Publishers
+        self.emergency_stop_pub = self.create_publisher(
+            Bool,
+            '/emergency_stop',
+            10
+        )
+
+        self.safety_status_pub = self.create_publisher(
+            Bool,
+            '/safety_ok',
+            10
+        )
+
+        # Timer for safety checks
+        self.safety_timer = self.create_timer(0.1, self.safety_check)
+
+        # State variables
+        self.current_joint_states = {}
+        self.joint_temperatures = {}
+        self.safety_lock = threading.Lock()
+        self.emergency_stop_active = False
+
+        self.get_logger().info('Safety Monitor initialized')
+
+    def joint_state_callback(self, msg):
+        """Update joint state information."""
+        with self.safety_lock:
+            for i, name in enumerate(msg.name):
+                if name not in self.current_joint_states:
+                    self.current_joint_states[name] = {}
+                self.current_joint_states[name]['position'] = msg.position[i] if i < len(msg.position) else 0.0
+                self.current_joint_states[name]['velocity'] = msg.velocity[i] if i < len(msg.velocity) else 0.0
+                self.current_joint_states[name]['effort'] = msg.effort[i] if i < len(msg.effort) else 0.0
+
+    def temperature_callback(self, msg):
+        """Update temperature information."""
+        with self.safety_lock:
+            self.joint_temperatures[msg.header.frame_id] = msg.temperature
+
+    def safety_check(self):
+        """Perform safety checks."""
+        with self.safety_lock:
+            if self.emergency_stop_active:
+                return
+
+            # Check joint temperatures
+            max_temp = self.get_parameter('max_joint_temp').value
+            for joint_name, temp in self.joint_temperatures.items():
+                if temp > max_temp:
+                    self.get_logger().error(f'OVERTEMP: {joint_name} at {temp}°C')
+                    self.trigger_emergency_stop()
+                    return
+
+            # Check joint limits and velocities
+            for joint_name, state in self.current_joint_states.items():
+                # Check position limits (simplified - would use actual URDF limits)
+                if abs(state['position']) > 3.14:  # Exceeded joint limit
+                    self.get_logger().error(f'JOINT LIMIT: {joint_name} at {state["position"]}')
+                    self.trigger_emergency_stop()
+                    return
+
+                # Check velocity limits
+                if abs(state['velocity']) > 5.0:  # Excessive velocity
+                    self.get_logger().error(f'HIGH VELOCITY: {joint_name} at {state["velocity"]}')
+                    self.trigger_emergency_stop()
+                    return
+
+        # If we got here, everything is OK
+        safety_msg = Bool()
+        safety_msg.data = not self.emergency_stop_active
+        self.safety_status_pub.publish(safety_msg)
+
+    def trigger_emergency_stop(self):
+        """Trigger emergency stop."""
+        self.emergency_stop_active = True
+        stop_msg = Bool()
+        stop_msg.data = True
+        self.emergency_stop_pub.publish(stop_msg)
+        self.get_logger().fatal('EMERGENCY STOP ACTIVATED')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    safety_monitor = SafetyMonitor()
+
+    try:
+        rclpy.spin(safety_monitor)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        safety_monitor.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Testing and Validation
+
+### Launch File for Complete Pipeline
+
+```python
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
+
+
+def generate_launch_description():
+    """Launch the complete arm control pipeline."""
+
+    config = os.path.join(
+        get_package_share_directory('ros2_arm_control'),
+        'config',
+        'arm_control_params.yaml'
+    )
+
+    return LaunchDescription([
+        # Arm controller node
+        Node(
+            package='ros2_arm_control',
+            executable='arm_controller',
+            name='arm_controller',
+            parameters=[config],
+            output='screen'
+        ),
+
+        # Trajectory planner node
+        Node(
+            package='ros2_arm_control',
+            executable='trajectory_planner',
+            name='trajectory_planner',
+            parameters=[config],
+            output='screen'
+        ),
+
+        # Safety monitor node
+        Node(
+            package='ros2_arm_control',
+            executable='safety_monitor',
+            name='safety_monitor',
+            parameters=[config],
+            output='screen'
+        )
+    ])
+```
+
+### Parameter Configuration
+
+```yaml
+# config/arm_control_params.yaml
+arm_controller:
+  ros__parameters:
+    joint_names: ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_flex_joint', 'wrist_roll_joint']
+    control_frequency: 50.0
+    position_tolerance: 0.01
+    velocity_tolerance: 0.1
+
+trajectory_planner:
+  ros__parameters:
+    max_velocity: 1.0
+    max_acceleration: 2.0
+    smoothing_factor: 0.1
+
+safety_monitor:
+  ros__parameters:
+    max_joint_temp: 70.0
+    max_motor_current: 10.0
+    collision_threshold: 0.1
+    enable_collision_detection: true
+```
+
+## Hands-On Exercises
+
+### Exercise 1: Implement a Simple Pick-and-Place Task
+Create a simple pick-and-place task using your control pipeline:
+
+1. Create a client node that sends a trajectory goal to move the arm to a "pick" position
+2. Add a delay to simulate grasping
+3. Send another trajectory goal to move to a "place" position
+4. Test the sequence in simulation
+
+### Exercise 2: Add Collision Avoidance
+Enhance your safety monitor with basic collision detection:
+
+1. Subscribe to laser scan or distance sensor data
+2. Implement a simple collision detection algorithm
+3. Trigger emergency stop when obstacles are too close
+4. Test with simulated obstacles in the environment
+
+### Exercise 3: Trajectory Optimization
+Improve your trajectory planner with better motion profiles:
+
+1. Implement trapezoidal velocity profiles
+2. Add acceleration and jerk constraints
+3. Compare execution times between different profiles
+4. Evaluate smoothness of motion
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Trajectory execution is jerky**: Check your velocity and acceleration limits, and ensure smooth velocity profiles in trajectory generation.
+- **Issue: Joint limits exceeded**: Verify your joint limit checking in the safety monitor and ensure trajectory planning respects limits.
+- **Issue: Communication delays**: Use appropriate QoS settings for real-time control and minimize network overhead.
+- **Issue: Safety system too sensitive**: Adjust safety thresholds based on actual robot capabilities and operational requirements.
+
+## Summary
+
+This lab provided hands-on experience building a complete ROS 2 control pipeline for a humanoid arm. You implemented components for trajectory planning, control execution, and safety monitoring. This pipeline forms the foundation for more complex robotic behaviors and demonstrates the integration of multiple ROS 2 concepts.
+
+## Further Exploration
+
+- Implement inverse kinematics for Cartesian space control
+- Add force control capabilities for compliant manipulation
+- Integrate perception systems for adaptive control
+- Implement learning-based control adaptation
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Deliverables
+
+Complete the following to finish this lab:
+1. Successfully run the complete control pipeline with a simple trajectory
+2. Demonstrate the safety monitoring functionality
+3. Document any modifications or improvements made to the base implementation
+4. Record performance metrics for trajectory execution
+
+<!-- Optional: Add custom components for interactive elements -->

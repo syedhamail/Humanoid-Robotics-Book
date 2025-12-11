@@ -1,0 +1,1054 @@
+---
+title: "Synthetic Data Generation & Photorealistic Pipelines"
+description: "Creating realistic training data for humanoid robotics using NVIDIA Isaac Sim's synthetic data generation capabilities"
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the principles of synthetic data generation for robotics
+- Configure Isaac Sim for photorealistic rendering and data generation
+- Implement domain randomization techniques for robust model training
+- Generate labeled datasets for computer vision tasks
+- Integrate synthetic data generation with machine learning pipelines
+- Evaluate the quality and transferability of synthetic data
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1 and Module 2 on ROS 2 fundamentals and physics simulation
+- Understand the basics of computer vision and machine learning
+- Be familiar with Isaac Sim architecture and USD concepts
+- Have experience with Python and data processing pipelines
+- Understand the basics of camera models and sensor simulation
+
+## Introduction
+
+Synthetic data generation is a transformative approach in robotics that enables the creation of large, diverse, and perfectly labeled datasets without the need for expensive and time-consuming real-world data collection. In the context of humanoid robotics, synthetic data generation allows for the creation of training datasets that include rare scenarios, challenging lighting conditions, and diverse environments that would be difficult or impossible to capture in the real world.
+
+NVIDIA Isaac Sim provides powerful synthetic data generation capabilities built on top of the Omniverse platform. These capabilities leverage high-fidelity rendering, physically accurate simulation, and domain randomization to create datasets that can be used to train computer vision models, perception algorithms, and control systems for humanoid robots.
+
+The synthetic data generation pipeline in Isaac Sim typically involves:
+- **Scene Generation**: Creating diverse and realistic 3D environments
+- **Domain Randomization**: Varying materials, lighting, textures, and object positions
+- **Sensor Simulation**: Accurately modeling camera, LiDAR, and other sensors
+- **Data Annotation**: Automatically generating ground truth labels
+- **Output Formatting**: Exporting data in formats suitable for ML training
+
+## Core Concepts
+
+### Synthetic Data Generation Pipeline
+
+The synthetic data generation pipeline in Isaac Sim consists of several key components:
+
+- **USD Scene Composition**: Building complex scenes using Universal Scene Description
+- **Renderer**: RTX-based rendering for photorealistic images
+- **Sensor Simulation**: Accurate modeling of physical sensors
+- **Annotation Engine**: Automatic generation of ground truth labels
+- **Data Export**: Formatting data for ML frameworks
+
+### Domain Randomization
+
+Domain randomization is a technique that improves the robustness of models trained on synthetic data by introducing random variations in the simulation environment:
+
+- **Material Randomization**: Varying surface properties, textures, and colors
+- **Lighting Randomization**: Changing light positions, intensities, and colors
+- **Object Placement**: Randomizing object positions, orientations, and scales
+- **Camera Parameters**: Varying camera poses, intrinsics, and noise models
+
+### Photorealistic Rendering
+
+Isaac Sim's rendering pipeline enables:
+- **Ray Tracing**: Physically accurate light transport
+- **Global Illumination**: Realistic indirect lighting
+- **Material Simulation**: Accurate BRDF models for surfaces
+- **Atmospheric Effects**: Fog, haze, and environmental lighting
+
+### Ground Truth Generation
+
+Automatic annotation capabilities include:
+- **Semantic Segmentation**: Pixel-level class labels
+- **Instance Segmentation**: Object instance identification
+- **Bounding Boxes**: 2D and 3D bounding box annotations
+- **Keypoint Labels**: Joint positions and landmarks
+- **Depth Maps**: Per-pixel depth information
+
+## Code Examples
+
+### Basic Synthetic Data Generation Script
+
+```python
+#!/usr/bin/env python3
+
+import omni
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.synthetic_utils import SyntheticDataHelper
+from omni.isaac.synthetic_utils.sensors import CameraGenerator
+import numpy as np
+import cv2
+from PIL import Image
+import os
+import json
+from pxr import UsdGeom, Gf
+
+
+class SyntheticDataGenerator:
+    """
+    Class for generating synthetic data using Isaac Sim.
+    """
+
+    def __init__(self, output_dir="synthetic_data", num_samples=1000):
+        self.world = World(stage_units_in_meters=1.0)
+        self.output_dir = output_dir
+        self.num_samples = num_samples
+        self.synthetic_helper = None
+        self.camera = None
+
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(f"{output_dir}/images", exist_ok=True)
+        os.makedirs(f"{output_dir}/labels", exist_ok=True)
+        os.makedirs(f"{output_dir}/depth", exist_ok=True)
+
+        # Initialize the world
+        self.setup_world()
+
+    def setup_world(self):
+        """Set up the basic simulation environment."""
+        # Add ground plane
+        self.world.scene.add_default_ground_plane()
+
+        # Set up basic lighting
+        self.setup_lighting()
+
+        # Add a simple robot for data generation
+        self.add_robot()
+
+        # Add objects for training
+        self.add_training_objects()
+
+        print("World setup complete")
+
+    def setup_lighting(self):
+        """Configure randomized lighting for domain randomization."""
+        from omni.isaac.core.utils.prims import define_prim
+        from pxr import UsdLux
+
+        # Add dome light
+        dome_light = define_prim("/World/DomeLight", "DomeLight")
+        dome_light.GetAttribute("inputs:intensity").Set(3000)
+
+        # Add directional light that can be randomized
+        directional_light = define_prim("/World/DirectionalLight", "DistantLight")
+        directional_light.GetAttribute("inputs:intensity").Set(1000)
+        directional_light.GetAttribute("inputs:angle").Set(0.5)
+
+    def add_robot(self):
+        """Add a simple robot to the scene."""
+        # For this example, we'll add a simple cube robot
+        from omni.isaac.core.robots import Robot
+        from omni.isaac.core.prims import RigidPrim
+
+        # Create a simple robot body
+        robot_body = self.world.scene.add(
+            RigidPrim(
+                prim_path="/World/RobotBody",
+                name="robot_body",
+                position=[0, 0, 0.5],
+                scale=[0.5, 0.2, 0.2],
+                mass=1.0
+            )
+        )
+
+        print("Robot added to scene")
+
+    def add_training_objects(self):
+        """Add objects for training data generation."""
+        from omni.isaac.core.objects import DynamicCuboid, DynamicSphere
+
+        # Add various objects for detection/tracking
+        for i in range(5):
+            obj_type = np.random.choice(['cube', 'sphere'])
+            pos = [np.random.uniform(-2, 2), np.random.uniform(-2, 2), 0.1]
+
+            if obj_type == 'cube':
+                obj = self.world.scene.add(
+                    DynamicCuboid(
+                        prim_path=f"/World/Object_{i}",
+                        name=f"object_{i}",
+                        position=pos,
+                        size=0.2,
+                        color=np.random.random(3)
+                    )
+                )
+            else:
+                obj = self.world.scene.add(
+                    DynamicSphere(
+                        prim_path=f"/World/Object_{i}",
+                        name=f"object_{i}",
+                        position=pos,
+                        radius=0.1,
+                        color=np.random.random(3)
+                    )
+                )
+
+        print("Training objects added to scene")
+
+    def setup_camera(self):
+        """Set up camera for data generation."""
+        from omni.isaac.core.utils.prims import get_prim_at_path
+        from omni.kit.viewport.utility import get_active_viewport
+
+        # Get or create camera
+        viewport = get_active_viewport()
+        camera_path = viewport.get_active_camera()
+
+        # Set camera parameters
+        viewport.camera_position = (3, 3, 2)
+        viewport.camera_target = (0, 0, 0.5)
+
+        print("Camera setup complete")
+
+    def randomize_scene(self):
+        """Apply domain randomization to the scene."""
+        # Randomize lighting
+        dome_light = get_prim_at_path("/World/DomeLight")
+        intensity = np.random.uniform(1000, 5000)
+        dome_light.GetAttribute("inputs:intensity").Set(intensity)
+
+        # Randomize object positions and colors
+        for i in range(5):
+            obj_path = f"/World/Object_{i}"
+            obj = get_prim_at_path(obj_path)
+
+            # Randomize position
+            new_pos = [
+                np.random.uniform(-2, 2),
+                np.random.uniform(-2, 2),
+                0.1
+            ]
+
+            # Apply transform
+            xform = UsdGeom.Xformable(obj)
+            xform.MakeMatrixXform()
+            xform.SetXformOpOrder([xform.AddTranslateOp()])
+            xform.GetOrderedXformOps()[0].Set(Gf.Vec3d(*new_pos))
+
+            # Randomize color for visual objects
+            color_attr = obj.GetAttribute("primvars:displayColor")
+            if color_attr:
+                color_attr.Set(np.random.random(3))
+
+    def capture_synthetic_data(self, sample_idx):
+        """Capture synthetic data for a given sample."""
+        # Step the world to apply randomization
+        self.world.step(render=True)
+
+        # Capture RGB image
+        rgb_data = self.capture_rgb_image()
+
+        # Capture depth data
+        depth_data = self.capture_depth_image()
+
+        # Capture segmentation data
+        seg_data = self.capture_segmentation()
+
+        # Save the data
+        self.save_sample(sample_idx, rgb_data, depth_data, seg_data)
+
+        return {
+            'rgb': rgb_data,
+            'depth': depth_data,
+            'segmentation': seg_data
+        }
+
+    def capture_rgb_image(self):
+        """Capture RGB image from the camera."""
+        # In a real implementation, this would use Isaac Sim's rendering pipeline
+        # For this example, we'll return a dummy RGB image
+        return np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+
+    def capture_depth_image(self):
+        """Capture depth image from the camera."""
+        # In a real implementation, this would use Isaac Sim's depth rendering
+        # For this example, we'll return a dummy depth image
+        return np.random.uniform(0.1, 10.0, (480, 640)).astype(np.float32)
+
+    def capture_segmentation(self):
+        """Capture segmentation data."""
+        # In a real implementation, this would use Isaac Sim's segmentation rendering
+        # For this example, we'll return a dummy segmentation image
+        return np.random.randint(0, 10, (480, 640), dtype=np.uint8)
+
+    def save_sample(self, sample_idx, rgb_data, depth_data, seg_data):
+        """Save a synthetic data sample."""
+        # Save RGB image
+        rgb_img = Image.fromarray(rgb_data)
+        rgb_img.save(f"{self.output_dir}/images/sample_{sample_idx:06d}.png")
+
+        # Save depth image (as npy for precision)
+        np.save(f"{self.output_dir}/depth/sample_{sample_idx:06d}.npy", depth_data)
+
+        # Save segmentation
+        seg_img = Image.fromarray(seg_data)
+        seg_img.save(f"{self.output_dir}/labels/sample_{sample_idx:06d}.png")
+
+        # Create annotation JSON
+        annotation = {
+            'sample_id': f'sample_{sample_idx:06d}',
+            'image_path': f'images/sample_{sample_idx:06d}.png',
+            'depth_path': f'depth/sample_{sample_idx:06d}.npy',
+            'label_path': f'labels/sample_{sample_idx:06d}.png',
+            'camera_intrinsics': {
+                'fx': 320,
+                'fy': 320,
+                'cx': 320,
+                'cy': 240
+            }
+        }
+
+        with open(f"{self.output_dir}/labels/sample_{sample_idx:06d}.json", 'w') as f:
+            json.dump(annotation, f, indent=2)
+
+    def generate_dataset(self):
+        """Generate the complete synthetic dataset."""
+        print(f"Generating {self.num_samples} synthetic samples...")
+
+        for i in range(self.num_samples):
+            # Apply domain randomization
+            self.randomize_scene()
+
+            # Capture data
+            sample_data = self.capture_synthetic_data(i)
+
+            # Print progress
+            if (i + 1) % 100 == 0:
+                print(f"Generated {i + 1}/{self.num_samples} samples")
+
+        print(f"Dataset generation complete. Data saved to {self.output_dir}")
+
+    def cleanup(self):
+        """Clean up the simulation environment."""
+        self.world.clear()
+        omni.kit.App().get().shutdown()
+
+
+def main():
+    """Main function to run the synthetic data generation."""
+    # Initialize Omni
+    omni.kit.GlobalStartupParams().initialize()
+
+    # Create synthetic data generator
+    generator = SyntheticDataGenerator(
+        output_dir="synthetic_data_examples",
+        num_samples=500  # Reduced for example purposes
+    )
+
+    # Setup camera
+    generator.setup_camera()
+
+    # Generate dataset
+    generator.generate_dataset()
+
+    # Cleanup
+    generator.cleanup()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Isaac Sim Synthetic Data Pipeline
+
+```python
+#!/usr/bin/env python3
+
+import omni
+from omni.isaac.core import World
+from omni.isaac.synthetic_utils import SyntheticDataHelper
+from omni.isaac.synthetic_utils.sensors import CameraGenerator
+from omni.isaac.synthetic_utils.exporters import DatasetExporter
+from omni.isaac.core.utils.stage import add_reference_to_stage
+import numpy as np
+import os
+import json
+from PIL import Image
+import cv2
+
+
+class IsaacSimSyntheticPipeline:
+    """
+    Advanced synthetic data generation pipeline using Isaac Sim.
+    """
+
+    def __init__(self, config_path=None):
+        self.world = World(stage_units_in_meters=1.0)
+        self.synthetic_helper = None
+        self.config = self.load_config(config_path) if config_path else self.default_config()
+
+        # Setup output directories
+        self.setup_directories()
+
+        # Initialize the pipeline
+        self.initialize_pipeline()
+
+    def load_config(self, config_path):
+        """Load configuration from JSON file."""
+        with open(config_path, 'r') as f:
+            return json.load(f)
+
+    def default_config(self):
+        """Default configuration for synthetic data generation."""
+        return {
+            "output_dir": "isaac_synthetic_data",
+            "num_samples": 1000,
+            "image_size": [640, 480],
+            "camera_params": {
+                "focal_length": 320,
+                "principal_point": [320, 240]
+            },
+            "domain_randomization": {
+                "lighting_range": [1000, 5000],
+                "material_range": [0.0, 1.0],
+                "object_placement_range": [-3, 3]
+            },
+            "data_types": ["rgb", "depth", "segmentation", "normals", "motion_vectors"],
+            "annotations": {
+                "bounding_boxes": True,
+                "keypoints": False,
+                "instance_masks": True
+            }
+        }
+
+    def setup_directories(self):
+        """Setup output directories for synthetic data."""
+        base_dir = self.config["output_dir"]
+        os.makedirs(base_dir, exist_ok=True)
+
+        # Create subdirectories for different data types
+        for data_type in self.config["data_types"]:
+            os.makedirs(f"{base_dir}/{data_type}", exist_ok=True)
+
+        # Create annotation directory
+        os.makedirs(f"{base_dir}/annotations", exist_ok=True)
+
+    def initialize_pipeline(self):
+        """Initialize the synthetic data generation pipeline."""
+        # Add ground plane
+        self.world.scene.add_default_ground_plane()
+
+        # Setup lighting
+        self.setup_environment()
+
+        # Initialize synthetic data helper
+        self.synthetic_helper = SyntheticDataHelper()
+
+        print("Synthetic data pipeline initialized")
+
+    def setup_environment(self):
+        """Setup the environment with randomizable elements."""
+        # Add dome light
+        from omni.isaac.core.utils.prims import define_prim
+        from pxr import UsdLux
+
+        dome_light = define_prim("/World/DomeLight", "DomeLight")
+        dome_light.GetAttribute("inputs:intensity").Set(3000)
+
+        # Add multiple point lights for complex lighting
+        for i in range(3):
+            light = define_prim(f"/World/PointLight_{i}", "SphereLight")
+            light.GetAttribute("inputs:radius").Set(0.1)
+            light.GetAttribute("inputs:intensity").Set(1000)
+            # Position will be randomized later
+
+    def randomize_environment(self):
+        """Apply domain randomization to the environment."""
+        # Randomize dome light intensity
+        dome_light = self.get_prim_at_path("/World/DomeLight")
+        intensity = np.random.uniform(
+            self.config["domain_randomization"]["lighting_range"][0],
+            self.config["domain_randomization"]["lighting_range"][1]
+        )
+        dome_light.GetAttribute("inputs:intensity").Set(intensity)
+
+        # Randomize point light positions and intensities
+        for i in range(3):
+            light = self.get_prim_at_path(f"/World/PointLight_{i}")
+
+            # Random position
+            pos = [
+                np.random.uniform(-2, 2),
+                np.random.uniform(-2, 2),
+                np.random.uniform(2, 4)
+            ]
+
+            # Apply position
+            from pxr import UsdGeom, Gf
+            xform = UsdGeom.Xformable(light)
+            xform.MakeMatrixXform()
+            xform.SetXformOpOrder([xform.AddTranslateOp()])
+            xform.GetOrderedXformOps()[0].Set(Gf.Vec3d(*pos))
+
+            # Random intensity
+            light_intensity = np.random.uniform(500, 1500)
+            light.GetAttribute("inputs:intensity").Set(light_intensity)
+
+    def add_random_objects(self):
+        """Add random objects to the scene for data generation."""
+        from omni.isaac.core.objects import DynamicCuboid, DynamicSphere, DynamicCylinder
+
+        num_objects = np.random.randint(3, 8)
+
+        for i in range(num_objects):
+            obj_type = np.random.choice(['cube', 'sphere', 'cylinder'])
+            pos = [
+                np.random.uniform(-2, 2),
+                np.random.uniform(-2, 2),
+                np.random.uniform(0.1, 2.0)
+            ]
+
+            # Random size
+            size = np.random.uniform(0.1, 0.5)
+
+            if obj_type == 'cube':
+                obj = self.world.scene.add(
+                    DynamicCuboid(
+                        prim_path=f"/World/Object_{i}",
+                        name=f"object_{i}",
+                        position=pos,
+                        size=size,
+                        color=np.random.random(3)
+                    )
+                )
+            elif obj_type == 'sphere':
+                obj = self.world.scene.add(
+                    DynamicSphere(
+                        prim_path=f"/World/Object_{i}",
+                        name=f"object_{i}",
+                        position=pos,
+                        radius=size/2,
+                        color=np.random.random(3)
+                    )
+                )
+            else:  # cylinder
+                obj = self.world.scene.add(
+                    DynamicCylinder(
+                        prim_path=f"/World/Object_{i}",
+                        name=f"object_{i}",
+                        position=pos,
+                        radius=size/2,
+                        height=size,
+                        color=np.random.random(3)
+                    )
+                )
+
+    def capture_synthetic_frame(self, frame_idx):
+        """Capture a complete synthetic frame with all data types."""
+        # Step the world
+        self.world.step(render=True)
+
+        # Capture different data types
+        frame_data = {}
+
+        if "rgb" in self.config["data_types"]:
+            frame_data["rgb"] = self.capture_rgb()
+
+        if "depth" in self.config["data_types"]:
+            frame_data["depth"] = self.capture_depth()
+
+        if "segmentation" in self.config["data_types"]:
+            frame_data["segmentation"] = self.capture_segmentation()
+
+        if "normals" in self.config["data_types"]:
+            frame_data["normals"] = self.capture_normals()
+
+        # Generate annotations
+        annotations = self.generate_annotations(frame_data)
+
+        # Save the frame
+        self.save_frame(frame_idx, frame_data, annotations)
+
+        return frame_data, annotations
+
+    def capture_rgb(self):
+        """Capture RGB image."""
+        # In a real implementation, this would use Isaac Sim's rendering
+        # For this example, we'll return a dummy image
+        width, height = self.config["image_size"]
+        return np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+
+    def capture_depth(self):
+        """Capture depth image."""
+        width, height = self.config["image_size"]
+        return np.random.uniform(0.1, 10.0, (height, width)).astype(np.float32)
+
+    def capture_segmentation(self):
+        """Capture segmentation image."""
+        width, height = self.config["image_size"]
+        return np.random.randint(0, 20, (height, width), dtype=np.uint8)
+
+    def capture_normals(self):
+        """Capture surface normals."""
+        width, height = self.config["image_size"]
+        # Normals are 3-channel with values in [-1, 1]
+        return np.random.uniform(-1, 1, (height, width, 3)).astype(np.float32)
+
+    def generate_annotations(self, frame_data):
+        """Generate annotations for the captured frame."""
+        annotations = {
+            "frame_id": len(os.listdir(f"{self.config['output_dir']}/rgb")) if os.path.exists(f"{self.config['output_dir']}/rgb") else 0,
+            "objects": [],
+            "camera_pose": self.get_camera_pose(),
+            "camera_intrinsics": self.config["camera_params"]
+        }
+
+        # In a real implementation, this would extract object information
+        # For this example, we'll create dummy annotations
+        num_objects = np.random.randint(1, 5)
+        for i in range(num_objects):
+            obj_annotation = {
+                "id": i,
+                "class": np.random.choice(["cube", "sphere", "cylinder"]),
+                "bbox": [
+                    np.random.randint(0, self.config["image_size"][0] - 100),
+                    np.random.randint(0, self.config["image_size"][1] - 100),
+                    np.random.randint(50, 100),
+                    np.random.randint(50, 100)
+                ],  # [x, y, width, height]
+                "center_3d": [
+                    np.random.uniform(-2, 2),
+                    np.random.uniform(-2, 2),
+                    np.random.uniform(0.1, 2.0)
+                ]
+            }
+            annotations["objects"].append(obj_annotation)
+
+        return annotations
+
+    def get_camera_pose(self):
+        """Get current camera pose."""
+        # In a real implementation, this would get the actual camera pose
+        return {
+            "position": [3, 3, 2],
+            "rotation": [0, 0, 0, 1]  # quaternion
+        }
+
+    def save_frame(self, frame_idx, frame_data, annotations):
+        """Save the captured frame and annotations."""
+        base_dir = self.config["output_dir"]
+
+        # Save each data type
+        for data_type, data in frame_data.items():
+            if data_type == "rgb":
+                img = Image.fromarray(data)
+                img.save(f"{base_dir}/{data_type}/frame_{frame_idx:06d}.png")
+            elif data_type == "depth":
+                np.save(f"{base_dir}/{data_type}/frame_{frame_idx:06d}.npy", data)
+            elif data_type == "segmentation":
+                img = Image.fromarray(data)
+                img.save(f"{base_dir}/{data_type}/frame_{frame_idx:06d}.png")
+            elif data_type == "normals":
+                np.save(f"{base_dir}/{data_type}/frame_{frame_idx:06d}.npy", data)
+
+        # Save annotations
+        with open(f"{base_dir}/annotations/frame_{frame_idx:06d}.json", 'w') as f:
+            json.dump(annotations, f, indent=2)
+
+    def generate_dataset(self):
+        """Generate the complete synthetic dataset."""
+        print(f"Generating {self.config['num_samples']} synthetic frames...")
+
+        for i in range(self.config["num_samples"]):
+            # Randomize environment
+            self.randomize_environment()
+
+            # Add random objects
+            self.add_random_objects()
+
+            # Capture frame
+            frame_data, annotations = self.capture_synthetic_frame(i)
+
+            # Clear objects for next iteration
+            self.clear_objects()
+
+            # Print progress
+            if (i + 1) % 100 == 0:
+                print(f"Generated {i + 1}/{self.config['num_samples']} frames")
+
+    def clear_objects(self):
+        """Clear randomly added objects from the scene."""
+        for i in range(10):  # Clear up to 10 objects
+            try:
+                obj = self.get_prim_at_path(f"/World/Object_{i}")
+                if obj:
+                    obj.GetPrim().RemoveFromStage()
+            except:
+                pass  # Object doesn't exist, continue
+
+    def export_dataset(self):
+        """Export the dataset in standard formats."""
+        exporter = DatasetExporter(self.config["output_dir"])
+        exporter.export_to_coco()  # Export to COCO format
+        exporter.export_to_kitti()  # Export to KITTI format
+        print("Dataset exported to standard formats")
+
+    def cleanup(self):
+        """Clean up the simulation environment."""
+        self.world.clear()
+        omni.kit.App().get().shutdown()
+
+
+def main():
+    """Main function to run the Isaac Sim synthetic pipeline."""
+    # Initialize Omni
+    omni.kit.GlobalStartupParams().initialize()
+
+    # Create pipeline
+    pipeline = IsaacSimSyntheticPipeline()
+
+    # Generate dataset
+    pipeline.generate_dataset()
+
+    # Export dataset
+    pipeline.export_dataset()
+
+    # Cleanup
+    pipeline.cleanup()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Domain Randomization Configuration
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import json
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
+import random
+
+
+@dataclass
+class DomainRandomizationConfig:
+    """
+    Configuration for domain randomization parameters.
+    """
+    # Lighting parameters
+    lighting_intensity_range: Tuple[float, float] = (1000, 5000)
+    lighting_color_range: Tuple[float, float] = (0.8, 1.2)
+    lighting_position_range: Tuple[float, float] = (-3, 3)
+
+    # Material parameters
+    albedo_range: Tuple[float, float] = (0.0, 1.0)
+    metallic_range: Tuple[float, float] = (0.0, 1.0)
+    roughness_range: Tuple[float, float] = (0.0, 1.0)
+    normal_map_scale_range: Tuple[float, float] = (0.0, 1.0)
+
+    # Environment parameters
+    object_position_range: Tuple[float, float] = (-2, 2)
+    object_rotation_range: Tuple[float, float] = (-np.pi, np.pi)
+    object_scale_range: Tuple[float, float] = (0.5, 2.0)
+
+    # Camera parameters
+    camera_position_range: Tuple[float, float] = (-5, 5)
+    camera_fov_range: Tuple[float, float] = (0.5, 1.5)
+
+    # Texture parameters
+    texture_scale_range: Tuple[float, float] = (0.5, 2.0)
+    texture_rotation_range: Tuple[float, float] = (0, 2*np.pi)
+
+
+class DomainRandomizer:
+    """
+    Class for applying domain randomization to Isaac Sim scenes.
+    """
+
+    def __init__(self, config: DomainRandomizationConfig = None):
+        self.config = config or DomainRandomizationConfig()
+
+    def randomize_lighting(self, light_prim):
+        """Randomize lighting properties."""
+        # Randomize intensity
+        intensity = np.random.uniform(
+            self.config.lighting_intensity_range[0],
+            self.config.lighting_intensity_range[1]
+        )
+        light_prim.GetAttribute("inputs:intensity").Set(intensity)
+
+        # Randomize color (for dome lights)
+        if light_prim.GetTypeName() == "DomeLight":
+            color = np.random.uniform(
+                self.config.lighting_color_range[0],
+                self.config.lighting_color_range[1],
+                size=3
+            )
+            light_prim.GetAttribute("inputs:color").Set(color)
+
+    def randomize_material(self, material_prim):
+        """Randomize material properties."""
+        # Randomize albedo (diffuse color)
+        albedo = np.random.uniform(
+            self.config.albedo_range[0],
+            self.config.albedo_range[1],
+            size=3
+        )
+        material_prim.GetAttribute("inputs:diffuse_tint").Set(albedo)
+
+        # Randomize metallic value
+        metallic = np.random.uniform(
+            self.config.metallic_range[0],
+            self.config.metallic_range[1]
+        )
+        material_prim.GetAttribute("inputs:metallic").Set(metallic)
+
+        # Randomize roughness
+        roughness = np.random.uniform(
+            self.config.roughness_range[0],
+            self.config.roughness_range[1]
+        )
+        material_prim.GetAttribute("inputs:roughness").Set(roughness)
+
+    def randomize_object_transform(self, object_prim):
+        """Randomize object position, rotation, and scale."""
+        from pxr import UsdGeom, Gf
+
+        # Randomize position
+        pos = [
+            np.random.uniform(
+                self.config.object_position_range[0],
+                self.config.object_position_range[1]
+            ) for _ in range(3)
+        ]
+
+        # Randomize rotation (in radians)
+        rot = [
+            np.random.uniform(
+                self.config.object_rotation_range[0],
+                self.config.object_rotation_range[1]
+            ) for _ in range(3)
+        ]
+
+        # Randomize scale
+        scale = np.random.uniform(
+            self.config.object_scale_range[0],
+            self.config.object_scale_range[1]
+        )
+
+        # Apply transforms
+        xform = UsdGeom.Xformable(object_prim)
+        xform.MakeMatrixXform()
+
+        # Set translation
+        translate_op = xform.AddTranslateOp()
+        translate_op.Set(Gf.Vec3d(*pos))
+
+        # Set rotation (using XYZ rotation)
+        rotate_op = xform.AddRotateXYZOp()
+        rotate_op.Set(Gf.Vec3f(*[r * 180 / np.pi for r in rot]))  # Convert to degrees
+
+        # Set scale
+        scale_op = xform.AddScaleOp()
+        scale_op.Set(Gf.Vec3f(scale, scale, scale))
+
+    def randomize_camera(self, camera_prim):
+        """Randomize camera parameters."""
+        # Randomize position
+        pos = [
+            np.random.uniform(
+                self.config.camera_position_range[0],
+                self.config.camera_position_range[1]
+            ) for _ in range(3)
+        ]
+
+        # Apply position (this is a simplified example)
+        # In practice, you'd need to work with the camera's transform
+        from pxr import UsdGeom, Gf
+        xform = UsdGeom.Xformable(camera_prim)
+        xform.MakeMatrixXform()
+        translate_op = xform.AddTranslateOp()
+        translate_op.Set(Gf.Vec3d(*pos))
+
+        # Randomize FOV would require accessing camera-specific attributes
+        # This is a placeholder for more complex camera randomization
+
+    def randomize_texture(self, texture_prim):
+        """Randomize texture properties."""
+        # Randomize texture scale
+        scale = np.random.uniform(
+            self.config.texture_scale_range[0],
+            self.config.texture_scale_range[1]
+        )
+        texture_prim.GetAttribute("inputs:scale").Set(scale)
+
+        # Randomize texture rotation
+        rotation = np.random.uniform(
+            self.config.texture_rotation_range[0],
+            self.config.texture_rotation_range[1]
+        )
+        texture_prim.GetAttribute("inputs:rotation").Set(rotation)
+
+
+class AdvancedDomainRandomizer(DomainRandomizer):
+    """
+    Advanced domain randomization with more sophisticated techniques.
+    """
+
+    def __init__(self, config: DomainRandomizationConfig = None):
+        super().__init__(config)
+        self.correlation_map = {}  # Map to store correlations between parameters
+
+    def apply_correlated_randomization(self, prim_map: Dict[str, object]):
+        """
+        Apply correlated randomization where parameters are related.
+        For example, lighting and material properties might be correlated.
+        """
+        # Generate correlated values
+        base_value = np.random.random()
+
+        # Correlate lighting and material properties
+        lighting_factor = base_value * 0.8 + 0.2  # Ensure minimum lighting
+        material_factor = base_value * 0.6 + 0.4  # Ensure minimum material response
+
+        # Apply to all lights
+        for prim_name, prim in prim_map.items():
+            if "light" in prim_name.lower():
+                intensity_attr = prim.GetAttribute("inputs:intensity")
+                if intensity_attr:
+                    current_intensity = intensity_attr.Get()
+                    new_intensity = current_intensity * lighting_factor
+                    intensity_attr.Set(new_intensity)
+
+        # Apply to all materials
+        for prim_name, prim in prim_map.items():
+            if "material" in prim_name.lower():
+                albedo_attr = prim.GetAttribute("inputs:diffuse_tint")
+                if albedo_attr:
+                    current_albedo = albedo_attr.Get()
+                    new_albedo = [c * material_factor for c in current_albedo]
+                    albedo_attr.Set(new_albedo)
+
+    def apply_temporal_consistency(self, prim_map: Dict[str, object], frame_idx: int):
+        """
+        Apply temporal consistency to ensure smooth transitions between frames.
+        """
+        # Use frame index to create smooth transitions
+        time_factor = (frame_idx % 100) / 100.0  # Cycle every 100 frames
+
+        for prim_name, prim in prim_map.items():
+            if "light" in prim_name.lower():
+                # Apply smooth intensity changes
+                base_intensity = 3000  # Default intensity
+                variation = 1000 * np.sin(time_factor * 2 * np.pi)  # Smooth oscillation
+                new_intensity = base_intensity + variation
+                prim.GetAttribute("inputs:intensity").Set(max(1000, new_intensity))  # Ensure minimum
+
+
+def create_domain_randomization_config():
+    """Create a domain randomization configuration."""
+    config = DomainRandomizationConfig(
+        lighting_intensity_range=(1500, 4000),
+        metallic_range=(0.0, 0.8),
+        roughness_range=(0.1, 0.9),
+        object_position_range=(-2.5, 2.5)
+    )
+
+    return config
+
+
+def main():
+    """Example usage of domain randomization."""
+    # Create configuration
+    config = create_domain_randomization_config()
+
+    # Create randomizer
+    randomizer = AdvancedDomainRandomizer(config)
+
+    # Example: Apply randomization to a hypothetical scene
+    # In practice, this would work with actual USD prims
+    print("Domain randomization configuration created:")
+    print(f"Lighting range: {config.lighting_intensity_range}")
+    print(f"Metallic range: {config.metallic_range}")
+    print(f"Roughness range: {config.roughness_range}")
+
+    # Example of temporal consistency
+    for frame in range(0, 10, 2):  # Every 2nd frame for demonstration
+        print(f"Applying temporal randomization for frame {frame}")
+        # This would be applied to actual scene prims in a real implementation
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Diagrams and Visuals
+
+![Synthetic Data Generation Pipeline](/img/diagrams/synthetic-data-pipeline.png)
+
+*Figure 1: Overview of the synthetic data generation pipeline in Isaac Sim, showing the flow from USD scene composition to labeled dataset output.*
+
+## Hands-On Lab
+
+### Exercise 1: Basic Synthetic Dataset Creation
+Create a synthetic dataset for object detection:
+
+1. Set up a scene with multiple objects of different shapes and colors
+2. Configure domain randomization parameters for lighting and materials
+3. Generate 1000 synthetic images with corresponding segmentation masks
+4. Validate the dataset by visualizing a few samples
+5. Export the dataset in COCO format for use with ML frameworks
+
+### Exercise 2: Domain Randomization Tuning
+Experiment with different domain randomization parameters:
+
+1. Create multiple datasets with different randomization settings
+2. Train a simple object detection model on each dataset
+3. Evaluate model performance on a real-world validation set
+4. Analyze which randomization parameters provide the best sim-to-real transfer
+5. Document the optimal settings for your specific use case
+
+### Exercise 3: Advanced Data Types
+Generate additional data types beyond RGB:
+
+1. Capture depth maps for 3D understanding
+2. Generate surface normal maps for geometry estimation
+3. Create optical flow data for motion understanding
+4. Add motion blur and other camera effects
+5. Validate that all data types are properly synchronized
+
+## Troubleshooting
+
+Common synthetic data generation issues and solutions:
+
+- **Issue: Artifacts in generated images**: Check material assignments and lighting setup, ensure proper texture coordinates and UV mapping.
+- **Issue: Poor domain randomization effectiveness**: Increase the range of randomization parameters and ensure proper correlation between related parameters.
+- **Issue: Slow generation performance**: Reduce scene complexity, optimize USD assets, and use proxy representations during generation.
+- **Issue: Misaligned annotations**: Verify camera parameters and coordinate system transformations between 3D scene and 2D images.
+
+## Summary
+
+This chapter covered synthetic data generation using NVIDIA Isaac Sim, including photorealistic rendering, domain randomization techniques, and dataset export capabilities. Synthetic data generation is crucial for training robust perception models for humanoid robots, allowing for the creation of diverse and perfectly labeled datasets without real-world data collection.
+
+## Further Reading
+
+- NVIDIA Isaac Sim Synthetic Data Generation Guide
+- Domain Randomization for Robust Perception
+- Photorealistic Rendering in Robotics Simulation
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a custom domain randomization function for a specific humanoid robotics task.
+2. Create a synthetic dataset for humanoid pose estimation with 3D joint annotations.
+3. Develop a quality assessment pipeline to evaluate synthetic data realism.
+
+<!-- Optional: Add custom components for interactive elements -->

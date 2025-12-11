@@ -1,0 +1,545 @@
+---
+title: "Simulating Gravity, Collisions & Dynamics"
+description: Understanding and configuring physics simulation for realistic humanoid robot behavior
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Configure physics engines for realistic gravity and dynamics simulation
+- Set up collision detection and response parameters for humanoid robots
+- Tune dynamics parameters for stable and realistic movement
+- Implement constraint systems for joint limits and contacts
+- Optimize simulation parameters for performance and accuracy
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapters 1-2 on physics simulation fundamentals and Gazebo setup
+- Understand basic physics concepts (forces, torques, dynamics)
+- Be familiar with robot kinematics and dynamics
+- Have experience with URDF/XACRO modeling for robots
+
+## Introduction
+
+Simulating gravity, collisions, and dynamics is fundamental to creating realistic humanoid robot behaviors in simulation. Unlike wheeled robots, humanoid robots rely heavily on dynamic balance, precise contact interactions, and complex multi-body dynamics. Getting the physics simulation right is crucial for developing controllers that will transfer effectively from simulation to reality.
+
+The physics simulation in Gazebo involves several interconnected components:
+- Gravity modeling for realistic weight effects
+- Collision detection for contact between bodies
+- Dynamics simulation for realistic motion under forces
+- Constraint solving for joint limits and contacts
+- Material properties for friction and restitution
+
+For humanoid robots, these components become particularly important because:
+- Balance and locomotion depend on accurate contact forces
+- Multiple contact points (feet, hands) require precise collision handling
+- Dynamic behaviors like walking and running require accurate dynamics
+- Stability margins are small, requiring precise simulation
+
+## Core Concepts
+
+### Gravity Modeling
+
+Gravity in simulation affects:
+- Robot posture and balance
+- Weight distribution and center of mass effects
+- Contact forces between robot and environment
+- Natural pendulum behaviors (limbs swinging)
+
+### Collision Detection
+
+Collision systems handle:
+- Broad-phase detection (fast rejection of distant objects)
+- Narrow-phase detection (precise contact identification)
+- Contact manifold generation (contact points and normals)
+- Collision filtering (which objects can collide)
+
+### Dynamics Simulation
+
+Dynamics simulation computes:
+- Forward dynamics (motion from applied forces)
+- Inverse dynamics (forces from desired motion)
+- Contact forces and constraints
+- Energy conservation and dissipation
+
+### Material Properties
+
+Material properties affect:
+- Friction coefficients for grip and sliding
+- Restitution (bounciness) for impact responses
+- Surface properties for realistic interactions
+
+### Performance vs Accuracy Trade-offs
+
+Physics simulation involves trade-offs between:
+- Accuracy and computational performance
+- Stability and responsiveness
+- Realism and simulation speed
+
+## Code Examples
+
+### Physics Engine Configuration
+
+```xml
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="humanoid_physics_world">
+    <!-- Advanced physics configuration -->
+    <physics type="ode">
+      <!-- Time stepping for accurate humanoid dynamics -->
+      <max_step_size>0.001</max_step_size>  <!-- 1ms for high-fidelity simulation -->
+      <real_time_factor>1.0</real_time_factor>  <!-- Real-time simulation -->
+      <real_time_update_rate>1000.0</real_time_update_rate>  <!-- 1kHz updates -->
+
+      <!-- Gravity settings -->
+      <gravity>0 0 -9.81</gravity>  <!-- Earth gravity -->
+
+      <!-- ODE-specific parameters for humanoid stability -->
+      <ode>
+        <solver>
+          <!-- Higher iteration count for stability -->
+          <iters>200</iters>
+          <sor>1.3</sor>  <!-- Successive Over-Relaxation parameter -->
+        </solver>
+
+        <!-- Constraint parameters for contact stability -->
+        <constraints>
+          <cfm>1e-5</cfm>  <!-- Constraint Force Mixing -->
+          <erp>0.2</erp>   <!-- Error Reduction Parameter -->
+          <contact_max_correcting_vel>100.0</contact_max_correcting_vel>
+          <contact_surface_layer>0.001</contact_surface_layer>
+        </constraints>
+      </ode>
+    </physics>
+
+    <!-- Example humanoid with detailed physics properties -->
+    <model name="advanced_humanoid">
+      <link name="torso">
+        <inertial>
+          <mass>15.0</mass>
+          <inertia>
+            <ixx>0.5</ixx>
+            <ixy>0.0</ixy>
+            <ixz>0.0</ixz>
+            <iyy>0.4</iyy>
+            <iyz>0.0</iyz>
+            <izz>0.3</izz>
+          </inertia>
+        </inertial>
+
+        <collision name="torso_collision">
+          <geometry>
+            <box>
+              <size>0.3 0.25 0.6</size>
+            </box>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.8</mu>  <!-- High friction for grip -->
+                <mu2>0.8</mu2>
+              </ode>
+            </friction>
+            <bounce>
+              <restitution_coefficient>0.1</restitution_coefficient>  <!-- Low bounce -->
+              <threshold>100000</threshold>
+            </bounce>
+            <contact>
+              <ode>
+                <soft_cfm>0.001</soft_cfm>
+                <soft_erp>0.2</soft_erp>
+                <kp>1e5</kp>  <!-- Contact stiffness -->
+                <kd>1e3</kd>  <!-- Contact damping -->
+                <max_vel>100.0</max_vel>
+                <min_depth>0.001</min_depth>
+              </ode>
+            </contact>
+          </surface>
+        </collision>
+
+        <visual name="torso_visual">
+          <geometry>
+            <box>
+              <size>0.3 0.25 0.6</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.2 1</ambient>
+            <diffuse>0.8 0.8 0.2 1</diffuse>
+          </material>
+        </visual>
+      </link>
+
+      <!-- Hip joint with detailed dynamics -->
+      <joint name="left_hip" type="revolute">
+        <parent>torso</parent>
+        <child>left_thigh</child>
+        <pose relative_to="torso">0.0 -0.15 -0.3 0 0 0</pose>
+        <axis>
+          <xyz>0 0 1</xyz>  <!-- Z-axis rotation -->
+          <limit>
+            <lower>-1.57</lower>  <!-- -90 degrees -->
+            <upper>1.57</upper>   <!-- 90 degrees -->
+            <effort>200</effort>  <!-- 200 Nm max torque -->
+            <velocity>5.0</velocity>  <!-- 5 rad/s max velocity -->
+          </limit>
+          <dynamics>
+            <damping>5.0</damping>    <!-- Joint damping -->
+            <friction>2.0</friction>  <!-- Static friction -->
+            <spring_reference>0.0</spring_reference>
+            <spring_stiffness>0.0</spring_stiffness>
+          </dynamics>
+        </axis>
+      </joint>
+
+      <link name="left_thigh">
+        <inertial>
+          <mass>5.0</mass>
+          <inertia>
+            <ixx>0.1</ixx>
+            <ixy>0.0</ixy>
+            <ixz>0.0</ixz>
+            <iyy>0.1</iyy>
+            <iyz>0.0</iyz>
+            <izz>0.02</izz>
+          </inertia>
+        </inertial>
+
+        <collision name="thigh_collision">
+          <geometry>
+            <capsule>
+              <radius>0.08</radius>
+              <length>0.4</length>
+            </capsule>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>0.8</mu>
+                <mu2>0.8</mu2>
+              </ode>
+            </friction>
+            <contact>
+              <ode>
+                <soft_cfm>0.001</soft_cfm>
+                <soft_erp>0.2</soft_erp>
+              </ode>
+            </contact>
+          </surface>
+        </collision>
+      </link>
+
+      <!-- Ground plane with realistic properties -->
+      <model name="ground_plane" static="true">
+        <link name="link">
+          <collision name="collision">
+            <geometry>
+              <plane>
+                <normal>0 0 1</normal>
+                <size>100 100</size>
+              </plane>
+            </geometry>
+            <surface>
+              <friction>
+                <ode>
+                  <mu>1.0</mu>  <!-- High friction for good grip -->
+                  <mu2>1.0</mu2>
+                </ode>
+              </friction>
+              <bounce>
+                <restitution_coefficient>0.01</restitution_coefficient>  <!-- Very low bounce -->
+              </bounce>
+            </surface>
+          </collision>
+
+          <visual name="visual">
+            <geometry>
+              <plane>
+                <normal>0 0 1</normal>
+                <size>100 100</size>
+              </plane>
+            </geometry>
+            <material>
+              <ambient>0.7 0.7 0.7 1</ambient>
+              <diffuse>0.7 0.7 0.7 1</diffuse>
+            </material>
+          </visual>
+        </link>
+      </model>
+    </model>
+  </world>
+</sdf>
+```
+
+### Dynamic Balance Controller Example
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState, Imu
+from geometry_msgs.msg import Vector3, Point
+from std_msgs.msg import Float64MultiArray
+from tf2_ros import TransformListener, Buffer
+import numpy as np
+import math
+
+
+class DynamicBalanceController(Node):
+    """
+    Controller for maintaining dynamic balance in humanoid simulation.
+    """
+
+    def __init__(self):
+        super().__init__('dynamic_balance_controller')
+
+        # Subscriptions for sensor data
+        self.joint_state_sub = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.joint_state_callback,
+            10
+        )
+
+        self.imu_sub = self.create_subscription(
+            Imu,
+            '/imu/data',
+            self.imu_callback,
+            10
+        )
+
+        # Publisher for joint commands
+        self.joint_cmd_pub = self.create_publisher(
+            Float64MultiArray,
+            '/joint_commands',
+            10
+        )
+
+        # Timer for control loop
+        self.control_timer = self.create_timer(0.01, self.balance_control_loop)  # 100Hz
+
+        # State variables
+        self.current_joint_positions = {}
+        self.current_joint_velocities = {}
+        self.imu_orientation = [0.0, 0.0, 0.0, 1.0]  # quaternion
+        self.imu_angular_velocity = [0.0, 0.0, 0.0]
+        self.imu_linear_acceleration = [0.0, 0.0, 0.0]
+
+        # Balance control parameters
+        self.balance_kp = 50.0  # Proportional gain
+        self.balance_kd = 10.0  # Derivative gain
+        self.max_torque = 100.0  # Maximum joint torque
+
+        # Zero configuration for balance
+        self.nominal_configuration = {
+            'left_hip': 0.0,
+            'right_hip': 0.0,
+            'left_knee': 0.0,
+            'right_knee': 0.0,
+            'left_ankle': 0.0,
+            'right_ankle': 0.0
+        }
+
+        self.get_logger().info('Dynamic Balance Controller initialized')
+
+    def joint_state_callback(self, msg):
+        """Update current joint states."""
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                self.current_joint_positions[name] = msg.position[i]
+            if i < len(msg.velocity):
+                self.current_joint_velocities[name] = msg.velocity[i]
+
+    def imu_callback(self, msg):
+        """Update IMU data."""
+        self.imu_orientation = [
+            msg.orientation.x,
+            msg.orientation.y,
+            msg.orientation.z,
+            msg.orientation.w
+        ]
+        self.imu_angular_velocity = [
+            msg.angular_velocity.x,
+            msg.angular_velocity.y,
+            msg.angular_velocity.z
+        ]
+        self.imu_linear_acceleration = [
+            msg.linear_acceleration.x,
+            msg.linear_acceleration.y,
+            msg.linear_acceleration.z
+        ]
+
+    def balance_control_loop(self):
+        """Main balance control loop."""
+        # Calculate orientation error from upright position
+        roll, pitch, yaw = self.quaternion_to_euler(self.imu_orientation)
+
+        # Calculate desired corrective torques
+        desired_torques = self.calculate_balance_correction(roll, pitch)
+
+        # Apply joint limits and constraints
+        safe_torques = self.apply_joint_limits(desired_torques)
+
+        # Publish commands
+        cmd_msg = Float64MultiArray()
+        cmd_msg.data = list(safe_torques.values())
+        self.joint_cmd_pub.publish(cmd_msg)
+
+    def calculate_balance_correction(self, roll_error, pitch_error):
+        """Calculate balance correction torques based on orientation errors."""
+        torques = {}
+
+        # Use PD control for balance correction
+        # Correct roll with hip joints
+        hip_torque = -self.balance_kp * roll_error - self.balance_kd * self.imu_angular_velocity[0]
+        torques['left_hip'] = np.clip(hip_torque, -self.max_torque, self.max_torque)
+        torques['right_hip'] = np.clip(-hip_torque, -self.max_torque, self.max_torque)
+
+        # Correct pitch with knee and ankle joints
+        leg_torque = -self.balance_kp * pitch_error - self.balance_kd * self.imu_angular_velocity[1]
+        torques['left_knee'] = np.clip(leg_torque * 0.5, -self.max_torque, self.max_torque)
+        torques['right_knee'] = np.clip(-leg_torque * 0.5, -self.max_torque, self.max_torque)
+        torques['left_ankle'] = np.clip(leg_torque * 0.3, -self.max_torque, self.max_torque)
+        torques['right_ankle'] = np.clip(-leg_torque * 0.3, -self.max_torque, self.max_torque)
+
+        return torques
+
+    def apply_joint_limits(self, torques):
+        """Apply safety limits to joint torques."""
+        limited_torques = {}
+
+        for joint_name, torque in torques.items():
+            # Get joint-specific limits if available
+            max_effort = self.get_joint_max_effort(joint_name)
+            limited_torques[joint_name] = np.clip(torque, -max_effort, max_effort)
+
+        return limited_torques
+
+    def get_joint_max_effort(self, joint_name):
+        """Get maximum effort for a specific joint."""
+        # In a real implementation, this would come from URDF or parameter server
+        default_max = 100.0
+
+        if 'hip' in joint_name:
+            return 200.0  # Hips need more torque
+        elif 'knee' in joint_name:
+            return 150.0  # Knees need substantial torque
+        elif 'ankle' in joint_name:
+            return 80.0   # Ankles need less torque
+        else:
+            return default_max
+
+    def quaternion_to_euler(self, q):
+        """Convert quaternion to Euler angles (roll, pitch, yaw)."""
+        x, y, z, w = q
+
+        # Roll (x-axis rotation)
+        sinr_cosp = 2 * (w * x + y * z)
+        cosr_cosp = 1 - 2 * (x * x + y * y)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (y-axis rotation)
+        sinp = 2 * (w * y - z * x)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)  # Use 90 degrees if out of range
+        else:
+            pitch = math.asin(sinp)
+
+        # Yaw (z-axis rotation)
+        siny_cosp = 2 * (w * z + x * y)
+        cosy_cosp = 1 - 2 * (y * y + z * z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        return roll, pitch, yaw
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    balance_controller = DynamicBalanceController()
+
+    try:
+        rclpy.spin(balance_controller)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        balance_controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![Physics Simulation Parameters](/img/diagrams/physics-simulation-parameters.svg)
+
+*Figure 1: Key parameters for configuring physics simulation in Gazebo, showing the relationship between time step, solver iterations, and simulation accuracy.*
+
+## Hands-On Lab
+
+### Exercise 1: Physics Parameter Tuning
+Experiment with different physics parameters to observe their effects on humanoid balance:
+
+1. Create a simple humanoid model with basic joints
+2. Implement a simple balance controller
+3. Adjust physics parameters (time step, solver iterations, ERP, CFM)
+4. Measure the stability of the balance controller under different settings
+5. Document the optimal parameter ranges for humanoid simulation
+
+### Exercise 2: Collision Geometry Optimization
+Compare different collision geometries for humanoid simulation:
+
+1. Create the same humanoid model with different collision representations:
+   - Simple primitive shapes (boxes, cylinders, spheres)
+   - Convex hulls for more accuracy
+   - Detailed mesh colliders for maximum accuracy
+2. Measure simulation performance (frames per second) for each representation
+3. Assess the stability of contact interactions with each representation
+4. Determine the optimal balance between accuracy and performance
+
+### Exercise 3: Dynamic Behavior Validation
+Validate the physics simulation by comparing to real-world expectations:
+
+1. Create a simple pendulum model (single link with revolute joint)
+2. Calculate the theoretical period of oscillation
+3. Simulate the pendulum in Gazebo and measure the actual period
+4. Adjust physics parameters until simulation matches theory
+5. Apply the validated parameters to your humanoid model
+
+## Troubleshooting
+
+Common physics simulation issues and solutions:
+
+- **Issue: Robot falls through the ground**: Check collision geometries, ensure the ground plane is static, and verify that contact parameters are properly configured.
+- **Issue: Unstable joint movements**: Increase solver iterations, reduce time step, adjust ERP/CFM values, or increase joint damping.
+- **Issue: Excessive simulation time**: Use simpler collision geometries, increase time step, reduce solver iterations, or decrease real-time factor.
+- **Issue: Objects bouncing unrealistically**: Reduce restitution coefficients, increase damping, or adjust contact parameters.
+- **Issue: Robot tips over easily**: Check center of mass placement, adjust foot geometry, or tune balance controller gains.
+
+## Summary
+
+This chapter covered the fundamentals of simulating gravity, collisions, and dynamics for humanoid robots in Gazebo. We explored the key physics parameters that affect simulation quality, demonstrated how to configure collision properties for realistic interactions, and showed how to implement a basic balance controller. Proper physics configuration is crucial for developing humanoid robots that can transition effectively from simulation to reality.
+
+## Further Reading
+
+- Gazebo Physics Engine Documentation
+- ODE User Guide for Robotics Applications
+- Robot Dynamics and Control Theory
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a custom Gazebo plugin that adds specialized humanoid physics behaviors.
+2. Compare the performance of different physics engines (ODE, Bullet, Simbody) for humanoid balance simulation.
+3. Design a physics validation protocol to ensure simulation accuracy for humanoid locomotion tasks.
+
+<!-- Optional: Add custom components for interactive elements -->

@@ -1,0 +1,1005 @@
+---
+title: Reinforcement Learning for Humanoid Control
+description: Implementing reinforcement learning algorithms for humanoid robot control using Isaac Sim
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the fundamentals of reinforcement learning for robotics
+- Implement RL algorithms for humanoid locomotion control
+- Design reward functions for humanoid-specific tasks
+- Train policies in Isaac Sim simulation environments
+- Transfer learned policies from simulation to real robots
+- Evaluate and optimize RL-based humanoid control systems
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1-4 on ROS 2, simulation, and navigation
+- Understand basic machine learning and reinforcement learning concepts
+- Be familiar with Isaac Sim and Python programming
+- Have experience with PyTorch or TensorFlow for neural networks
+- Understand humanoid robot kinematics and dynamics
+
+## Introduction
+
+Reinforcement Learning (RL) has emerged as a powerful approach for learning complex control policies for humanoid robots. Unlike traditional control methods that rely on analytical models and hand-designed controllers, RL enables robots to learn optimal behaviors through trial and error interaction with their environment. This is particularly valuable for humanoid robots, which have complex dynamics, numerous degrees of freedom, and challenging balance requirements.
+
+Isaac Sim provides an ideal platform for RL-based humanoid control development, offering:
+- Physically accurate simulation with realistic dynamics
+- High-fidelity rendering for vision-based tasks
+- Support for large-scale parallel environments
+- Integration with popular RL frameworks
+- Tools for sim-to-real transfer
+
+The application of RL to humanoid control typically involves:
+- **Locomotion Learning**: Learning to walk, run, and navigate
+- **Balance Control**: Maintaining stability in various conditions
+- **Skill Learning**: Acquiring complex motor skills
+- **Adaptive Control**: Adjusting to different terrains and conditions
+
+## Core Concepts
+
+### Reinforcement Learning Fundamentals
+
+Reinforcement learning for humanoid control involves:
+- **State Space**: Robot joint positions, velocities, IMU readings, and environmental information
+- **Action Space**: Joint torques, positions, or gains
+- **Reward Function**: Metrics that guide learning toward desired behaviors
+- **Policy**: Mapping from states to actions that maximizes cumulative reward
+- **Environment**: The physics simulation where the robot operates
+
+### Humanoid-Specific Challenges
+
+RL for humanoid robots presents unique challenges:
+- **High-Dimensional Action Space**: Many joints requiring coordinated control
+- **Balance Requirements**: Maintaining center of mass within support polygon
+- **Contact Dynamics**: Complex interactions during walking and manipulation
+- **Safety Constraints**: Preventing falls and damage during learning
+- **Sample Efficiency**: Learning with limited training time
+
+### Isaac Sim RL Integration
+
+Isaac Sim provides several advantages for RL:
+- **Parallel Environments**: Training across multiple simultaneous simulations
+- **Physics Accuracy**: Realistic dynamics for sim-to-real transfer
+- **Sensor Simulation**: Accurate modeling of cameras, IMUs, and other sensors
+- **Domain Randomization**: Improving policy robustness through environmental variation
+- **Pre-built Environments**: Ready-to-use RL environments for common tasks
+
+### Reward Engineering
+
+Designing effective reward functions is crucial:
+- **Task-Specific Rewards**: Encouraging goal achievement
+- **Stability Rewards**: Maintaining balance and preventing falls
+- **Efficiency Rewards**: Minimizing energy consumption
+- **Natural Movement Rewards**: Encouraging human-like motions
+- **Safety Rewards**: Avoiding dangerous configurations
+
+## Code Examples
+
+### Isaac Sim RL Environment for Humanoid Locomotion
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
+from gym import spaces
+import time
+import os
+from typing import Dict, List, Tuple, Optional
+
+# Import Isaac Sim components
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.utils.prims import get_prim_at_path
+from omni.isaac.core.robots import Robot
+from omni.isaac.core.articulations import Articulation
+from omni.isaac.core.utils.torch.maths import torch_get_euler_xyz
+from omni.isaac.core.utils.torch.rotations import (
+    quat_mul, quat_conjugate, quat_apply, quat_from_angle_axis
+)
+from omni.isaac.core.utils.nucleus import get_assets_root_path
+import omni
+import carb
+
+
+class HumanoidLocomotionEnv:
+    """
+    Isaac Sim environment for humanoid locomotion learning.
+    """
+
+    def __init__(
+        self,
+        num_envs: int = 4096,
+        device: str = "cuda:0",
+        sim_params: Dict = None,
+        env_spacing: float = 2.5,
+        max_episode_length: int = 1000
+    ):
+        # Environment parameters
+        self.num_envs = num_envs
+        self.device = device
+        self.env_spacing = env_spacing
+        self.max_episode_length = max_episode_length
+
+        # Initialize Isaac Sim world
+        self.world = World(stage_units_in_meters=1.0)
+
+        # Robot parameters
+        self.robot_name = "Humanoid"
+        self.num_dof = 24  # Example: 24 actuated joints
+        self.num_actions = self.num_dof
+        self.num_observations = 67  # State vector size
+
+        # Action and observation spaces
+        self.action_space = spaces.Box(
+            low=-1.0, high=1.0, shape=(self.num_actions,), dtype=np.float32
+        )
+        self.observation_space = spaces.Box(
+            low=-np.inf, high=np.inf, shape=(self.num_observations,), dtype=np.float32
+        )
+
+        # Episode tracking
+        self.episode_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        self.reset_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
+        self.time_out_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+
+        # Initialize tensors for robot state
+        self.root_pos = torch.zeros(self.num_envs, 3, device=self.device)
+        self.root_quat = torch.zeros(self.num_envs, 4, device=self.device)
+        self.root_lin_vel = torch.zeros(self.num_envs, 3, device=self.device)
+        self.root_ang_vel = torch.zeros(self.num_envs, 3, device=self.device)
+        self.dof_pos = torch.zeros(self.num_envs, self.num_dof, device=self.device)
+        self.dof_vel = torch.zeros(self.num_envs, self.num_dof, device=self.device)
+        self.dof_torques = torch.zeros(self.num_envs, self.num_dof, device=self.device)
+
+        # Default joint positions
+        self.default_dof_pos = torch.zeros(self.num_dof, device=self.device)
+
+        # Command parameters
+        self.commands = torch.zeros(self.num_envs, 6, device=self.device)  # [vx, vy, yaw_rate, pos_x, pos_y, heading]
+        self.command_ranges = {
+            'linear_vel_x': (-1.0, 1.0),
+            'linear_vel_y': (-0.5, 0.5),
+            'angular_vel_z': (-1.0, 1.0),
+            'heading': (-np.pi, np.pi)
+        }
+
+        # Reward parameters
+        self.rew_scales = {
+            'lin_vel': 1.0,
+            'ang_vel': 0.1,
+            'joint_acc': -0.0001,
+            'action_rate': -0.01,
+            'cosmetic': -1.0,
+            'height': 0.5,
+            'alive': 1.0,
+        }
+
+        # Initialize the simulation
+        self.setup_simulation()
+
+    def setup_simulation(self):
+        """
+        Set up the Isaac Sim environment with multiple humanoid robots.
+        """
+        # Add ground plane
+        self.world.scene.add_default_ground_plane()
+
+        # Create multiple environments
+        for i in range(self.num_envs):
+            # Create environment origin
+            env_origin = torch.tensor([i // 64, i % 64, 0], device=self.device) * self.env_spacing
+
+            # Add robot to environment
+            robot_path = f"/World/envs/env_{i}/Robot"
+            # In a real implementation, this would load the actual robot USD
+            # For now, we'll use a placeholder
+            add_reference_to_stage(
+                usd_path="/Isaac/Robots/Humanoid/humanoid_instanceable.usd",
+                prim_path=robot_path
+            )
+
+            # The robot would be added to the world here
+            # robot = self.world.scene.add(
+            #     Robot(
+            #         prim_path=robot_path,
+            #         name=f"robot_{i}",
+            #         position=env_origin + torch.tensor([0, 0, 1.0], device=self.device)
+            #     )
+            # )
+
+        print(f"Created {self.num_envs} parallel environments")
+
+    def reset_idx(self, env_ids):
+        """
+        Reset specific environments to initial state.
+        """
+        # Reset episode lengths
+        self.episode_length_buf[env_ids] = 0
+
+        # Randomize initial states
+        num_resets = len(env_ids)
+
+        # Randomize base positions
+        self.root_pos[env_ids, 0] = torch_rand_float(-0.5, 0.5, (num_resets, 1), self.device).squeeze(1)
+        self.root_pos[env_ids, 1] = torch_rand_float(-0.5, 0.5, (num_resets, 1), self.device).squeeze(1)
+        self.root_pos[env_ids, 2] = 1.0  # Fixed height
+
+        # Randomize base orientations
+        self.root_quat[env_ids] = quat_from_angle_axis(
+            torch_rand_float(-0.1, 0.1, (num_resets, 1), self.device).squeeze(1),
+            torch.tensor([0, 0, 1], device=self.device).repeat(num_resets, 1)
+        )
+
+        # Randomize base velocities
+        self.root_lin_vel[env_ids] = torch_rand_float(-0.1, 0.1, (num_resets, 3), self.device)
+        self.root_ang_vel[env_ids] = torch_rand_float(-0.1, 0.1, (num_resets, 3), self.device)
+
+        # Randomize joint positions and velocities
+        self.dof_pos[env_ids] = self.default_dof_pos.unsqueeze(0) + 0.25 * torch_rand_float(
+            -1.0, 1.0, (num_resets, self.num_dof), self.device
+        )
+        self.dof_vel[env_ids] = torch_rand_float(-0.1, 0.1, (num_resets, self.num_dof), self.device)
+
+        # Randomize commands
+        self.commands[env_ids, 0] = torch_rand_float(
+            self.command_ranges['linear_vel_x'][0],
+            self.command_ranges['linear_vel_x'][1],
+            (num_resets, 1), self.device
+        ).squeeze(1)
+        self.commands[env_ids, 1] = torch_rand_float(
+            self.command_ranges['linear_vel_y'][0],
+            self.command_ranges['linear_vel_y'][1],
+            (num_resets, 1), self.device
+        ).squeeze(1)
+        self.commands[env_ids, 2] = torch_rand_float(
+            self.command_ranges['angular_vel_z'][0],
+            self.command_ranges['angular_vel_z'][1],
+            (num_resets, 1), self.device
+        ).squeeze(1)
+
+        # Reset buffers
+        self.reset_buf[env_ids] = 1
+        self.time_out_buf[env_ids] = 0
+
+    def compute_observations(self):
+        """
+        Compute observations for all environments.
+        """
+        # Calculate projected gravity
+        gravity_vec = torch.zeros_like(self.root_quat)
+        gravity_vec[:, 2] = -1.0
+        projected_gravity = quat_apply(self.root_quat, gravity_vec)
+
+        # Assemble observation vector
+        obs = torch.cat([
+            self.root_pos[:, 2:3] - 1.0,  # height (relative to standing height)
+            projected_gravity,
+            self.root_lin_vel,
+            self.root_ang_vel,
+            self.dof_pos - self.default_dof_pos.unsqueeze(0),
+            self.dof_vel,
+            self.commands
+        ], dim=-1)
+
+        return obs
+
+    def compute_reward(self):
+        """
+        Compute rewards for all environments.
+        """
+        # Calculate various reward components
+        lin_vel_reward = torch.sum(self.commands[:, :2] * self.root_lin_vel[:, :2], dim=1) * self.rew_scales['lin_vel']
+        ang_vel_reward = self.root_ang_vel[:, 2] * self.commands[:, 2] * self.rew_scales['ang_vel']
+
+        # Joint acceleration penalty
+        joint_acc_penalty = torch.sum(torch.square(self.dof_vel), dim=1) * self.rew_scales['joint_acc']
+
+        # Action rate penalty
+        action_rate_penalty = torch.sum(torch.square(self.dof_torques), dim=1) * self.rew_scales['action_rate']
+
+        # Height maintenance reward
+        height_reward = torch.square(self.root_pos[:, 2] - 1.0) * self.rew_scales['height']
+
+        # Alive reward
+        alive_reward = torch.ones_like(lin_vel_reward) * self.rew_scales['alive']
+
+        # Combine rewards
+        total_reward = (
+            lin_vel_reward +
+            ang_vel_reward +
+            joint_acc_penalty +
+            action_rate_penalty +
+            height_reward +
+            alive_reward
+        )
+
+        return total_reward
+
+    def compute_reset(self):
+        """
+        Determine which environments should be reset.
+        """
+        # Reset if robot falls
+        terminated = torch.zeros_like(self.reset_buf)
+        terminated = torch.where(self.root_pos[:, 2] < 0.5, torch.ones_like(terminated), terminated)
+
+        # Reset if episode length exceeds max
+        done = torch.where(self.episode_length_buf >= self.max_episode_length, torch.ones_like(self.reset_buf), terminated)
+
+        return done
+
+    def pre_physics_step(self, actions):
+        """
+        Apply actions to the simulation before stepping physics.
+        """
+        # Convert actions to torques (example: scale actions by 100)
+        torques = actions * 100.0
+        self.dof_torques = torques
+
+        # In a real implementation, this would apply torques to the robot joints
+        # using Isaac Sim's physics API
+
+    def post_physics_step(self):
+        """
+        Process simulation results after physics step.
+        """
+        # Update episode length
+        self.episode_length_buf += 1
+
+        # Get current state from simulation
+        # In a real implementation, this would read from Isaac Sim
+        # For now, we'll simulate state updates
+        self.root_pos += self.root_lin_vel * self.world.get_physics_dt()
+        self.root_quat = integrate_quaternion(self.root_quat, self.root_ang_vel, self.world.get_physics_dt())
+        self.root_lin_vel += torch.tensor([0, 0, -9.81], device=self.device) * self.world.get_physics_dt()  # Gravity
+        self.dof_pos += self.dof_vel * self.world.get_physics_dt()
+
+        # Calculate rewards
+        rewards = self.compute_reward()
+
+        # Determine resets
+        resets = self.compute_reset()
+
+        # Update reset buffer
+        self.reset_buf = resets
+        self.time_out_buf = torch.where(self.episode_length_buf >= self.max_episode_length, torch.ones_like(self.time_out_buf), torch.zeros_like(self.time_out_buf))
+
+        # Get observations
+        obs = self.compute_observations()
+
+        # Reset environments that need it
+        reset_env_ids = (resets == 1).nonzero(as_tuple=False).flatten()
+        if len(reset_env_ids) > 0:
+            self.reset_idx(reset_env_ids)
+
+        return obs, rewards, resets, self.episode_length_buf.clone()
+
+    def step(self, actions):
+        """
+        Execute one simulation step with given actions.
+        """
+        # Apply actions
+        self.pre_physics_step(actions)
+
+        # Step the physics simulation
+        self.world.step(render=False)
+
+        # Process simulation results
+        obs, rewards, resets, episode_length = self.post_physics_step()
+
+        return obs, rewards, resets, episode_length
+
+    def reset(self):
+        """
+        Reset all environments to initial state.
+        """
+        self.reset_idx(torch.arange(self.num_envs, device=self.device))
+        obs = self.compute_observations()
+        return obs
+
+
+def torch_rand_float(lower, upper, shape, device):
+    """
+    Generate random floats in a given range using PyTorch.
+    """
+    return (upper - lower) * torch.rand(*shape, device=device) + lower
+
+
+def integrate_quaternion(quat, omega, dt):
+    """
+    Integrate quaternion with angular velocity.
+    """
+    # Convert angular velocity to quaternion derivative
+    omega_quat = torch.zeros_like(quat)
+    omega_quat[:, 0] = 0
+    omega_quat[:, 1:] = omega
+
+    # Compute quaternion derivative
+    quat_dot = 0.5 * quat_mul(omega_quat, quat)
+
+    # Integrate
+    new_quat = quat + quat_dot * dt
+
+    # Normalize
+    new_quat = new_quat / torch.norm(new_quat, dim=1, keepdim=True)
+
+    return new_quat
+
+
+class ActorCritic(nn.Module):
+    """
+    Actor-Critic network for humanoid control.
+    """
+
+    def __init__(self, obs_dim, action_dim, actor_hidden_dims=[512, 256, 128],
+                 critic_hidden_dims=[512, 256, 128], init_noise_std=1.0):
+        super(ActorCritic, self).__init__()
+
+        # Initialize standard deviations for actions
+        self.std = nn.Parameter(init_noise_std * torch.ones(action_dim))
+
+        # Actor network
+        actor_layers = []
+        actor_dims = [obs_dim] + actor_hidden_dims + [action_dim]
+        for i in range(len(actor_dims) - 1):
+            actor_layers.append(nn.Linear(actor_dims[i], actor_dims[i+1]))
+            actor_layers.append(nn.ELU())
+        self.actor = nn.Sequential(*actor_layers[:-1])  # Remove last activation
+
+        # Critic network
+        critic_layers = []
+        critic_dims = [obs_dim] + critic_hidden_dims + [1]
+        for i in range(len(critic_dims) - 1):
+            critic_layers.append(nn.Linear(critic_dims[i], critic_dims[i+1]))
+            critic_layers.append(nn.ELU())
+        self.critic = nn.Sequential(*critic_layers[:-1])  # Remove last activation
+
+        # Initialize weights
+        self.init_weights()
+
+    def init_weights(self):
+        """
+        Initialize network weights.
+        """
+        for m in self.actor.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, np.sqrt(2))
+                nn.init.zeros_(m.bias)
+
+        for m in self.critic.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, np.sqrt(2))
+                nn.init.zeros_(m.bias)
+
+    def forward(self):
+        """
+        Forward pass is not implemented as we use separate actor and critic functions.
+        """
+        raise NotImplementedError
+
+    def act(self, obs, **kwargs):
+        """
+        Compute actions given observations.
+        """
+        mean_actions = self.actor(obs)
+        std_actions = self.std.repeat((obs.shape[0], 1))
+        actions = torch.normal(mean_actions, std_actions)
+        return actions
+
+    def get_actions_log_prob(self, obs):
+        """
+        Get actions and their log probabilities.
+        """
+        mean_actions = self.actor(obs)
+        std_actions = self.std.repeat((obs.shape[0], 1))
+        actions = torch.normal(mean_actions, std_actions)
+        log_prob = self.get_log_prob(mean_actions, std_actions, actions)
+        return actions, log_prob
+
+    def get_log_prob(self, mean, std, actions):
+        """
+        Calculate log probabilities of actions.
+        """
+        var = std.pow(2)
+        log_prob = -(actions - mean).pow(2) / (2 * var) - 0.5 * torch.log(2 * torch.pi * var)
+        return log_prob.sum(dim=1)
+
+    def get_value(self, obs):
+        """
+        Get value estimates for observations.
+        """
+        return self.critic(obs)
+
+    def evaluate(self, obs, actions):
+        """
+        Evaluate actions for given observations.
+        """
+        mean_actions = self.actor(obs)
+        std_actions = self.std.repeat((obs.shape[0], 1))
+        log_prob = self.get_log_prob(mean_actions, std_actions, actions)
+        value = self.critic(obs)
+        return log_prob, value
+
+
+class PPO:
+    """
+    PPO (Proximal Policy Optimization) algorithm implementation.
+    """
+
+    def __init__(self, actor_critic, device='cuda:0', clip_param=0.2,
+                 num_learning_epochs=1, num_mini_batches=4,
+                 value_loss_coef=1.0, entropy_coef=0.0,
+                 learning_rate=1e-3, max_grad_norm=1.0):
+
+        self.device = device
+        self.clip_param = clip_param
+        self.num_learning_epochs = num_learning_epochs
+        self.num_mini_batches = num_mini_batches
+        self.value_loss_coef = value_loss_coef
+        self.entropy_coef = entropy_coef
+        self.learning_rate = learning_rate
+        self.max_grad_norm = max_grad_norm
+
+        # Initialize actor-critic
+        self.actor_critic = actor_critic.to(self.device)
+
+        # Initialize optimizer
+        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
+
+    def update(self, obs_batch, actions_batch, log_probs_batch,
+               values_batch, rewards_batch, dones_batch):
+        """
+        Update the policy using PPO.
+        """
+        # Calculate advantages
+        advantages = rewards_batch - values_batch
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # Calculate old and new values for clipping
+        old_log_probs = log_probs_batch
+        old_values = values_batch
+
+        # Perform multiple epochs of PPO updates
+        for epoch in range(self.num_learning_epochs):
+            # Divide batch into mini-batches
+            batch_size = obs_batch.shape[0]
+            mini_batch_size = batch_size // self.num_mini_batches
+
+            for i in range(self.num_mini_batches):
+                start_idx = i * mini_batch_size
+                end_idx = (i + 1) * mini_batch_size
+
+                mb_obs = obs_batch[start_idx:end_idx]
+                mb_actions = actions_batch[start_idx:end_idx]
+                mb_old_log_probs = old_log_probs[start_idx:end_idx]
+                mb_old_values = old_values[start_idx:end_idx]
+                mb_advantages = advantages[start_idx:end_idx]
+
+                # Get new values
+                mb_log_probs, mb_values = self.actor_critic.evaluate(mb_obs, mb_actions)
+
+                # Calculate ratio
+                ratio = torch.exp(mb_log_probs - mb_old_log_probs)
+
+                # Calculate surrogate losses
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * mb_advantages
+                action_loss = -torch.min(surr1, surr2).mean()
+
+                # Value loss
+                value_pred_clipped = mb_old_values + (mb_values - mb_old_values).clamp(
+                    -self.clip_param, self.clip_param
+                )
+                value_losses = (mb_values - rewards_batch[start_idx:end_idx]).pow(2)
+                value_losses_clipped = (value_pred_clipped - rewards_batch[start_idx:end_idx]).pow(2)
+                value_loss = 0.5 * torch.max(value_losses, value_losses_clipped).mean()
+
+                # Total loss
+                total_loss = action_loss + self.value_loss_coef * value_loss
+
+                # Optimize
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+                self.optimizer.step()
+
+        return total_loss.item()
+
+
+def train_humanoid_locomotion():
+    """
+    Train a humanoid robot for locomotion using PPO.
+    """
+    # Initialize environment
+    env = HumanoidLocomotionEnv(
+        num_envs=2048,
+        device="cuda:0" if torch.cuda.is_available() else "cpu"
+    )
+
+    # Initialize actor-critic network
+    obs_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.shape[0]
+    actor_critic = ActorCritic(obs_dim, action_dim)
+
+    # Initialize PPO algorithm
+    ppo = PPO(actor_critic)
+
+    # Initialize tensor storage for rollouts
+    rollout_obs = torch.zeros((1000, env.num_envs, obs_dim), device=actor_critic.device)
+    rollout_actions = torch.zeros((1000, env.num_envs, action_dim), device=actor_critic.device)
+    rollout_log_probs = torch.zeros((1000, env.num_envs), device=actor_critic.device)
+    rollout_rewards = torch.zeros((1000, env.num_envs), device=actor_critic.device)
+    rollout_values = torch.zeros((1000, env.num_envs), device=actor_critic.device)
+    rollout_dones = torch.zeros((1000, env.num_envs), device=actor_critic.device)
+
+    # Training loop
+    num_iterations = 1000
+    for iteration in range(num_iterations):
+        # Collect trajectories
+        obs = env.reset()
+        total_reward = 0
+        total_steps = 0
+
+        for step in range(1000):  # 1000 steps per iteration
+            # Get actions from policy
+            with torch.no_grad():
+                actions, log_probs = actor_critic.get_actions_log_prob(obs)
+                values = actor_critic.get_value(obs)
+
+            # Store in rollout buffer
+            rollout_obs[step] = obs
+            rollout_actions[step] = actions
+            rollout_log_probs[step] = log_probs
+            rollout_values[step] = values.flatten()
+
+            # Take step in environment
+            obs, rewards, dones, _ = env.step(actions)
+
+            # Store rewards and dones
+            rollout_rewards[step] = rewards
+            rollout_dones[step] = dones
+
+            # Update total reward
+            total_reward += rewards.mean().item()
+            total_steps += len(rewards)
+
+        # Update policy using collected trajectories
+        # Flatten the rollout data for training
+        flat_obs = rollout_obs.view(-1, obs_dim)
+        flat_actions = rollout_actions.view(-1, action_dim)
+        flat_log_probs = rollout_log_probs.view(-1)
+        flat_values = rollout_values.view(-1)
+        flat_rewards = rollout_rewards.view(-1)
+        flat_dones = rollout_dones.view(-1)
+
+        # Perform PPO update
+        loss = ppo.update(flat_obs, flat_actions, flat_log_probs, flat_values, flat_rewards, flat_dones)
+
+        print(f"Iteration {iteration}, Average Reward: {total_reward/1000:.2f}, Loss: {loss:.4f}")
+
+    print("Training completed!")
+
+
+def main():
+    """
+    Main function to run the humanoid RL training.
+    """
+    print("Initializing Humanoid RL Training...")
+
+    # Initialize Isaac Sim
+    omni.kit.GlobalStartupParams().initialize()
+
+    try:
+        # Train the humanoid
+        train_humanoid_locomotion()
+    except KeyboardInterrupt:
+        print("Training interrupted by user")
+    finally:
+        # Clean up
+        omni.kit.App().get().shutdown()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Sim-to-Real Transfer Techniques
+
+```python
+#!/usr/bin/env python3
+
+import torch
+import torch.nn as nn
+import numpy as np
+from typing import Dict, List, Tuple, Optional
+import random
+
+
+class DomainRandomization:
+    """
+    Domain randomization techniques for improving sim-to-real transfer.
+    """
+
+    def __init__(self, env_params: Dict):
+        self.env_params = env_params
+        self.param_ranges = {
+            'mass': [0.8, 1.2],  # 80% to 120% of nominal mass
+            'friction': [0.5, 1.5],  # Random friction coefficients
+            'com_offset': [-0.05, 0.05],  # COM offset in meters
+            'actuator_delay': [0.0, 0.02],  # Actuator delay in seconds
+            'sensor_noise': [0.0, 0.01],  # Sensor noise magnitude
+            'gravity': [9.5, 10.1]  # Gravity variation
+        }
+
+    def randomize_environment(self, env):
+        """
+        Randomize environment parameters for domain randomization.
+        """
+        # Randomize robot mass
+        mass_multiplier = np.random.uniform(
+            self.param_ranges['mass'][0],
+            self.param_ranges['mass'][1]
+        )
+        # Apply to robot in Isaac Sim
+
+        # Randomize friction
+        friction = np.random.uniform(
+            self.param_ranges['friction'][0],
+            self.param_ranges['friction'][1]
+        )
+        # Apply to contacts in Isaac Sim
+
+        # Randomize center of mass offset
+        com_offset = np.random.uniform(
+            self.param_ranges['com_offset'][0],
+            self.param_ranges['com_offset'][1],
+            size=3
+        )
+        # Apply to robot links in Isaac Sim
+
+        # Randomize actuator delays
+        delay = np.random.uniform(
+            self.param_ranges['actuator_delay'][0],
+            self.param_ranges['actuator_delay'][1]
+        )
+        # Apply to actuator models in Isaac Sim
+
+        # Randomize sensor noise
+        noise = np.random.uniform(
+            self.param_ranges['sensor_noise'][0],
+            self.param_ranges['sensor_noise'][1]
+        )
+        # Apply to sensor models in Isaac Sim
+
+        # Randomize gravity
+        gravity = np.random.uniform(
+            self.param_ranges['gravity'][0],
+            self.param_ranges['gravity'][1]
+        )
+        # Apply to physics scene in Isaac Sim
+
+        return {
+            'mass_multiplier': mass_multiplier,
+            'friction': friction,
+            'com_offset': com_offset,
+            'delay': delay,
+            'noise': noise,
+            'gravity': gravity
+        }
+
+
+class CurriculumLearning:
+    """
+    Curriculum learning for gradual skill acquisition.
+    """
+
+    def __init__(self, tasks: List[str], difficulty_schedule: List[int]):
+        self.tasks = tasks
+        self.difficulty_schedule = difficulty_schedule
+        self.current_task_idx = 0
+        self.current_difficulty = 0
+        self.task_performance = {task: [] for task in tasks}
+
+    def update_curriculum(self, performance: float, threshold: float = 0.8):
+        """
+        Update curriculum based on performance.
+        """
+        current_task = self.tasks[self.current_task_idx]
+        self.task_performance[current_task].append(performance)
+
+        # Calculate recent performance
+        recent_performance = np.mean(self.task_performance[current_task][-10:])
+
+        if recent_performance > threshold and self.current_task_idx < len(self.tasks) - 1:
+            self.current_task_idx += 1
+            print(f"Advancing to task: {self.tasks[self.current_task_idx]}")
+
+        return self.tasks[self.current_task_idx]
+
+    def get_current_task(self):
+        """
+        Get the current task in the curriculum.
+        """
+        return self.tasks[self.current_task_idx]
+
+
+class RobustPolicy(nn.Module):
+    """
+    Robust policy that can handle variations in the environment.
+    """
+
+    def __init__(self, obs_dim: int, action_dim: int, hidden_dims: List[int] = [512, 256, 128]):
+        super(RobustPolicy, self).__init__()
+
+        # Encoder for environment parameters
+        self.env_encoder = nn.Sequential(
+            nn.Linear(10, 64),  # 10 environment parameters
+            nn.ReLU(),
+            nn.Linear(64, 64),
+            nn.ReLU()
+        )
+
+        # Observation encoder
+        self.obs_encoder = nn.Sequential(
+            nn.Linear(obs_dim, hidden_dims[0]),
+            nn.ReLU()
+        )
+
+        # Combined processing
+        combined_dim = hidden_dims[0] + 64  # obs_encoded + env_encoded
+
+        # Actor network
+        actor_layers = []
+        actor_dims = [combined_dim] + hidden_dims + [action_dim]
+        for i in range(len(actor_dims) - 1):
+            actor_layers.append(nn.Linear(actor_dims[i], actor_dims[i+1]))
+            actor_layers.append(nn.ReLU())
+        self.actor = nn.Sequential(*actor_layers[:-1])  # Remove last ReLU
+
+        # Critic network
+        critic_layers = []
+        critic_dims = [combined_dim] + hidden_dims + [1]
+        for i in range(len(critic_dims) - 1):
+            critic_layers.append(nn.Linear(critic_dims[i], critic_dims[i+1]))
+            critic_layers.append(nn.ReLU())
+        self.critic = nn.Sequential(*critic_layers[:-1])  # Remove last ReLU
+
+        # Initialize weights
+        self.init_weights()
+
+    def init_weights(self):
+        """
+        Initialize network weights.
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.orthogonal_(m.weight, np.sqrt(2))
+                nn.init.zeros_(m.bias)
+
+    def forward(self, obs, env_params):
+        """
+        Forward pass with environment parameters.
+        """
+        # Encode environment parameters
+        env_encoded = self.env_encoder(env_params)
+
+        # Encode observations
+        obs_encoded = self.obs_encoder(obs)
+
+        # Combine encoded features
+        combined = torch.cat([obs_encoded, env_encoded], dim=-1)
+
+        # Compute actions and values
+        actions = self.actor(combined)
+        values = self.critic(combined)
+
+        return actions, values
+
+
+class AdaptiveController:
+    """
+    Adaptive controller for real-world deployment.
+    """
+
+    def __init__(self, policy: nn.Module, adaptation_rate: float = 0.01):
+        self.policy = policy
+        self.adaptation_rate = adaptation_rate
+        self.param_history = []
+        self.performance_history = []
+
+    def adapt_to_environment(self, obs: torch.Tensor, target_actions: torch.Tensor):
+        """
+        Adapt policy parameters based on observed performance.
+        """
+        # Get current policy actions
+        with torch.no_grad():
+            current_actions = self.policy(obs)
+
+        # Calculate action difference
+        action_diff = target_actions - current_actions
+
+        # Update policy parameters based on difference
+        # This is a simplified adaptation - in practice, you'd use more sophisticated methods
+        for param in self.policy.parameters():
+            if param.grad is not None:
+                param.data -= self.adaptation_rate * param.grad
+
+        return current_actions
+```
+
+## Diagrams and Visuals
+
+![RL Training Pipeline](/img/diagrams/rl-training-pipeline.png)
+
+*Figure 1: Reinforcement learning training pipeline for humanoid robots, showing the interaction between Isaac Sim simulation, policy network, and reward function.*
+
+## Hands-On Lab
+
+### Exercise 1: Basic Locomotion Training
+Train a humanoid robot to walk forward:
+
+1. Set up the Isaac Sim RL environment for locomotion
+2. Implement a reward function that encourages forward movement
+3. Train a policy using PPO algorithm
+4. Evaluate the learned policy in simulation
+5. Analyze the gait patterns and stability of the learned controller
+
+### Exercise 2: Domain Randomization
+Improve sim-to-real transfer with domain randomization:
+
+1. Implement domain randomization for robot parameters
+2. Train policies with varying physical parameters
+3. Test the robustness of the learned policy
+4. Compare performance with and without domain randomization
+5. Analyze the effect of different randomization ranges
+
+### Exercise 3: Curriculum Learning
+Implement curriculum learning for complex skills:
+
+1. Design a curriculum of increasing difficulty tasks
+2. Implement performance-based advancement criteria
+3. Train policies using the curriculum approach
+4. Compare with direct training on complex tasks
+5. Evaluate sample efficiency and final performance
+
+## Troubleshooting
+
+Common RL for humanoid control issues and solutions:
+
+- **Issue: Unstable gaits**: Reduce action magnitude, add stability rewards, or use more conservative reward shaping.
+- **Issue: Falls during training**: Implement safety constraints, use phase-based rewards, or start with simpler tasks.
+- **Issue: Poor sim-to-real transfer**: Increase domain randomization, add sensor noise simulation, or use system identification.
+- **Issue: Slow learning**: Increase parallel environments, tune hyperparameters, or simplify the task initially.
+
+## Summary
+
+This chapter covered reinforcement learning techniques for humanoid robot control using Isaac Sim. We explored the fundamentals of RL for robotics, implemented training algorithms, and discussed sim-to-real transfer techniques. The combination of Isaac Sim's accurate physics simulation and RL algorithms enables the learning of complex humanoid behaviors that would be difficult to engineer manually.
+
+## Further Reading
+
+- Deep Reinforcement Learning for Robotics
+- Domain Randomization in Robotics Simulation
+- Humanoid Locomotion Control with RL
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a reward function for humanoid walking that includes energy efficiency.
+2. Develop a domain randomization strategy for a specific humanoid task.
+3. Create a curriculum learning approach for teaching complex humanoid skills.
+
+<!-- Optional: Add custom components for interactive elements -->

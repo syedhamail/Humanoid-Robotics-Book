@@ -1,0 +1,573 @@
+---
+title: Sensor Simulation - LiDAR, Depth Cameras, IMUs
+description: Implementing realistic sensor simulation for humanoid robots in Gazebo and other simulators
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Configure and simulate LiDAR sensors in Gazebo for humanoid robots
+- Implement depth camera simulation with realistic parameters
+- Set up IMU sensors for orientation and acceleration measurements
+- Integrate sensor data with ROS 2 for perception pipelines
+- Optimize sensor simulation for performance and accuracy
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1 and Chapters 1-3 of Module 2
+- Understand Gazebo world and robot modeling from previous chapters
+- Be familiar with ROS 2 sensor message types (sensor_msgs)
+- Have experience with 3D computer vision and sensor fusion concepts
+
+## Introduction
+
+Sensor simulation is a critical component of realistic humanoid robotics simulation. Humanoid robots rely on multiple sensor modalities to perceive their environment and maintain balance. Accurate simulation of these sensors enables the development and testing of perception, localization, and control algorithms before deployment on physical hardware.
+
+For humanoid robots, the primary sensor modalities include:
+- **LiDAR**: For environment mapping, obstacle detection, and localization
+- **Depth Cameras**: For 3D scene understanding and object recognition
+- **IMUs**: For balance, orientation estimation, and motion tracking
+- **Force/Torque Sensors**: For contact detection and manipulation
+- **Encoders**: For joint position feedback
+
+This chapter focuses on simulating the three most common sensor types for humanoid robots: LiDAR, depth cameras, and IMUs. We'll explore how to configure these sensors in Gazebo with realistic parameters that match physical sensors.
+
+## Core Concepts
+
+### Sensor Physics in Simulation
+
+Simulated sensors model the physical processes of their real counterparts:
+- **Ray Tracing**: LiDAR and depth cameras use ray tracing to detect surfaces
+- **Noise Models**: Realistic noise patterns based on sensor physics
+- **Distortion Models**: Lens distortions and sensor imperfections
+- **Temporal Characteristics**: Sampling rates and temporal noise
+
+### LiDAR Simulation
+
+LiDAR sensors in Gazebo work by:
+- Casting rays in a fan pattern
+- Measuring distances to nearest surfaces
+- Applying noise and resolution models
+- Publishing point clouds or laser scan data
+
+### Depth Camera Simulation
+
+Depth cameras simulate:
+- Pinhole camera projection model
+- Depth measurement along optical axis
+- Noise patterns and resolution limits
+- RGB-D fusion for colored depth maps
+
+### IMU Simulation
+
+IMU sensors in simulation model:
+- Accelerometer measurements (linear acceleration + gravity)
+- Gyroscope measurements (angular velocity)
+- Magnetometer measurements (magnetic field direction)
+- Bias, drift, and noise characteristics
+
+### Sensor Fusion Considerations
+
+For humanoid robots, sensor fusion is essential for:
+- State estimation and localization
+- Balance control using multiple sensor inputs
+- Robust perception in challenging environments
+- Fail-safe operation with redundant sensors
+
+## Code Examples
+
+### LiDAR Sensor Configuration
+
+```xml
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="humanoid_with_lidar">
+    <link name="lidar_mount">
+      <inertial>
+        <mass>0.1</mass>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+      </inertial>
+
+      <collision name="lidar_collision">
+        <geometry>
+          <cylinder>
+            <radius>0.05</radius>
+            <length>0.03</length>
+          </cylinder>
+        </geometry>
+      </collision>
+
+      <visual name="lidar_visual">
+        <geometry>
+          <cylinder>
+            <radius>0.05</radius>
+            <length>0.03</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.2 0.2 0.2 1</ambient>
+          <diffuse>0.3 0.3 0.3 1</diffuse>
+        </material>
+      </visual>
+    </link>
+
+    <!-- LiDAR sensor plugin -->
+    <sensor name="laser_scanner" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>  <!-- 360 degree coverage -->
+            <resolution>1</resolution>  <!-- 1 degree resolution -->
+            <min_angle>-3.14159</min_angle>  <!-- -π radians -->
+            <max_angle>3.14159</max_angle>   <!-- π radians -->
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>    <!-- Minimum range: 0.1m -->
+          <max>10.0</max>   <!-- Maximum range: 10m -->
+          <resolution>0.01</resolution>  <!-- Range resolution: 1cm -->
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>  <!-- 1cm standard deviation -->
+        </noise>
+      </ray>
+
+      <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>lidar_mount</frame_name>
+        <update_rate>10</update_rate>  <!-- 10Hz update rate -->
+      </plugin>
+    </sensor>
+  </model>
+</sdf>
+```
+
+### Depth Camera Configuration
+
+```xml
+<sensor name="depth_camera" type="depth">
+  <pose>0 0 0.05 0 0 0</pose>  <!-- Offset from mount point -->
+  <camera>
+    <horizontal_fov>1.0472</horizontal_fov>  <!-- 60 degrees in radians -->
+    <image>
+      <width>640</width>
+      <height>480</height>
+      <format>R8G8B8</format>
+    </image>
+    <clip>
+      <near>0.1</near>    <!-- Near clipping plane -->
+      <far>10.0</far>    <!-- Far clipping plane -->
+    </clip>
+    <noise>
+      <type>gaussian</type>
+      <mean>0.0</mean>
+      <stddev>0.007</stddev>  <!-- Noise in pixels -->
+    </noise>
+  </camera>
+
+  <plugin name="camera_controller" filename="libgazebo_ros_openni_kinect_camera.so">
+    <always_on>true</always_on>
+    <update_rate>30</update_rate>  <!-- 30Hz for realistic depth cam -->
+    <camera_name>depth_camera</camera_name>
+    <frame_name>depth_camera_optical_frame</frame_name>
+    <baseline>0.2</baseline>
+    <distortion_k1>0.0</distortion_k1>
+    <distortion_k2>0.0</distortion_k2>
+    <distortion_k3>0.0</distortion_k3>
+    <distortion_t1>0.0</distortion_t1>
+    <distortion_t2>0.0</distortion_t2>
+
+    <point_cloud_cutoff>0.1</point_cloud_cutoff>
+    <point_cloud_cutoff_max>3.0</point_cloud_cutoff_max>
+
+    <Cx_prime>0</Cx_prime>
+    <Cx>320.5</Cx>  <!-- Principal point X -->
+    <Cy>240.5</Cy>  <!-- Principal point Y -->
+    <focal_length>320.0</focal_length>  <!-- Focal length in pixels -->
+
+    <hack_baseline>0.07</hack_baseline>
+
+    <ros>
+      <namespace>/humanoid</namespace>
+      <remapping>rgb/image_raw:=rgb/image_raw</remapping>
+      <remapping>depth/image_raw:=depth/image_raw</remapping>
+      <remapping>depth/camera_info:=depth/camera_info</remapping>
+      <remapping>points:=depth/points</remapping>
+    </ros>
+  </plugin>
+</sensor>
+```
+
+### IMU Sensor Configuration
+
+```xml
+<sensor name="imu_sensor" type="imu">
+  <always_on>true</always_on>
+  <update_rate>100</update_rate>  <!-- 100Hz for IMU -->
+  <pose>0 0 0 0 0 0</pose>
+
+  <imu>
+    <!-- Noise parameters based on typical IMU specs -->
+    <angular_velocity>
+      <x>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.001</stddev>  <!-- ~0.06 deg/s stddev -->
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.0001</bias_stddev>
+        </noise>
+      </x>
+      <y>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.001</stddev>
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.0001</bias_stddev>
+        </noise>
+      </y>
+      <z>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.001</stddev>
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.0001</bias_stddev>
+        </noise>
+      </z>
+    </angular_velocity>
+
+    <linear_acceleration>
+      <x>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.017</stddev>  <!-- ~0.17 m/s² stddev -->
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.001</bias_stddev>
+        </noise>
+      </x>
+      <y>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.017</stddev>
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.001</bias_stddev>
+        </noise>
+      </y>
+      <z>
+        <noise type="gaussian">
+          <mean>0.0</mean>
+          <stddev>0.017</stddev>
+          <bias_mean>0.0</bias_mean>
+          <bias_stddev>0.001</bias_stddev>
+        </noise>
+      </z>
+    </linear_acceleration>
+  </imu>
+
+  <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+    <ros>
+      <namespace>/humanoid</namespace>
+      <remapping>~/out:=imu/data</remapping>
+    </ros>
+    <frame_name>imu_link</frame_name>
+    <initial_orientation_as_reference>false</initial_orientation_as_reference>
+  </plugin>
+</sensor>
+```
+
+### Complete Humanoid Robot with Sensors
+
+```xml
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="humanoid_with_sensors">
+
+  <!-- LiDAR Mount on Head -->
+  <joint name="head_lidar_joint" type="fixed">
+    <parent link="head"/>
+    <child link="lidar_mount"/>
+    <origin xyz="0.0 0.0 0.1" rpy="0 0 0"/>  <!-- Above head -->
+  </joint>
+
+  <link name="lidar_mount">
+    <inertial>
+      <mass value="0.1"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.03" length="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.1 0.1 0.1 1"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.03" length="0.02"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- LiDAR sensor -->
+  <Gazebo reference="lidar_mount">
+    <sensor name="head_lidar" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>0.5</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.1</min>
+          <max>20.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.02</stddev>
+        </noise>
+      </ray>
+      <plugin name="lidar_controller" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>lidar_mount</frame_name>
+        <update_rate>10</update_rate>
+      </plugin>
+    </sensor>
+  </Gazebo>
+
+  <!-- Depth Camera on Chest -->
+  <joint name="chest_camera_joint" type="fixed">
+    <parent link="torso"/>
+    <child link="camera_mount"/>
+    <origin xyz="0.0 0.0 0.2" rpy="0 0 0"/>  <!-- On chest area -->
+  </joint>
+
+  <link name="camera_mount">
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.00005" ixy="0" ixz="0" iyy="0.00005" iyz="0" izz="0.00005"/>
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 0.02"/>
+      </geometry>
+      <material name="red">
+        <color rgba="0.8 0.1 0.1 1"/>
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 0.02"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Depth camera sensor -->
+  <Gazebo reference="camera_mount">
+    <sensor name="chest_camera" type="depth">
+      <pose>0.01 0 0 0 0 0</pose>  <!-- Slight forward offset -->
+      <camera>
+        <horizontal_fov>1.0472</horizontal_fov>  <!-- 60 degrees -->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>5.0</far>
+        </clip>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_openni_kinect_camera.so">
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <camera_name>chest_camera</camera_name>
+        <frame_name>camera_mount</frame_name>
+        <baseline>0.2</baseline>
+        <distortion_k1>0.0</distortion_k1>
+        <distortion_k2>0.0</distortion_k2>
+        <distortion_k3>0.0</distortion_k3>
+        <distortion_t1>0.0</distortion_t1>
+        <distortion_t2>0.0</distortion_t2>
+        <point_cloud_cutoff>0.1</point_cloud_cutoff>
+        <point_cloud_cutoff_max>3.0</point_cloud_cutoff_max>
+        <Cx_prime>0</Cx_prime>
+        <Cx>320.5</Cx>
+        <Cy>240.5</Cy>
+        <focal_length>320.0</focal_length>
+        <hack_baseline>0.07</hack_baseline>
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>rgb/image_raw:=rgb/image_raw</remapping>
+          <remapping>depth/image_raw:=depth/image_raw</remapping>
+          <remapping>depth/camera_info:=depth/camera_info</remapping>
+          <remapping>points:=depth/points</remapping>
+        </ros>
+      </plugin>
+    </sensor>
+  </Gazebo>
+
+  <!-- IMU in Torso -->
+  <Gazebo reference="torso">
+    <sensor name="torso_imu" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <pose>0 0 0 0 0 0</pose>
+      <imu>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.001</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.0001</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.001</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.0001</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.001</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.0001</bias_stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>0.017</stddev>
+              <bias_mean>0.0</bias_mean>
+              <bias_stddev>0.001</bias_stddev>
+            </noise>
+          </z>
+        </linear_acceleration>
+      </imu>
+      <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+        <ros>
+          <namespace>/humanoid</namespace>
+          <remapping>~/out:=torso_imu</remapping>
+        </ros>
+        <frame_name>torso</frame_name>
+        <initial_orientation_as_reference>false</initial_orientation_as_reference>
+      </plugin>
+    </sensor>
+  </Gazebo>
+
+</robot>
+```
+
+## Diagrams and Visuals
+
+![Sensor Simulation Architecture](/img/diagrams/sensor-simulation-architecture.svg)
+
+*Figure 1: Architecture of sensor simulation showing how virtual sensors in Gazebo publish data to ROS 2 topics.*
+
+## Hands-On Lab
+
+### Exercise 1: Multi-Sensor Data Collection
+Create a node that subscribes to multiple sensor streams and analyzes the data:
+
+1. Subscribe to LiDAR, depth camera, and IMU topics
+2. Synchronize timestamps across sensors
+3. Visualize sensor data in RViz
+4. Analyze correlations between different sensor modalities
+
+### Exercise 2: Sensor Fusion for State Estimation
+Implement a basic sensor fusion algorithm:
+
+1. Create a node that combines IMU and depth camera data
+2. Estimate robot orientation using complementary filtering
+3. Compare fused estimate to individual sensor readings
+4. Evaluate the improvement in state estimation accuracy
+
+### Exercise 3: Sensor Parameter Optimization
+Experiment with different sensor parameters:
+
+1. Adjust LiDAR resolution and range parameters
+2. Modify camera field of view and noise characteristics
+3. Tune IMU noise parameters to match physical sensors
+4. Measure the impact on perception algorithm performance
+
+## Troubleshooting
+
+Common sensor simulation issues and solutions:
+
+- **Issue: Sensor data not publishing**: Check that sensor plugins are properly loaded and ROS namespaces are correctly configured.
+- **Issue: High CPU usage from sensors**: Reduce update rates or simplify sensor models for better performance.
+- **Issue: Unrealistic sensor noise**: Adjust noise parameters to match specifications of physical sensors.
+- **Issue: Timestamp synchronization problems**: Ensure proper clock synchronization between simulation and ROS nodes.
+
+## Summary
+
+This chapter covered the implementation of realistic sensor simulation for humanoid robots in Gazebo. We explored how to configure LiDAR, depth cameras, and IMUs with realistic parameters that match physical sensors. Proper sensor simulation is essential for developing perception and control algorithms that can transfer from simulation to reality.
+
+## Further Reading
+
+- Gazebo Sensor Plugins Documentation
+- ROS 2 Sensor Message Types Specification
+- Computer Vision for Robotics
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a sensor validation node that compares simulated sensor readings to ground truth.
+2. Create a custom sensor plugin for a specific humanoid application (e.g., force-torque sensing).
+3. Design a sensor calibration procedure for simulated sensors that matches physical calibration methods.
+
+<!-- Optional: Add custom components for interactive elements -->

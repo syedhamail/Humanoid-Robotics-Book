@@ -1,0 +1,364 @@
+---
+title: Working with URDF for Humanoid Robots
+description: Creating and utilizing Unified Robot Description Format files for humanoid robot modeling
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the structure and components of URDF files
+- Create URDF files for complex humanoid robots
+- Define joints, links, and materials properly
+- Incorporate visual and collision geometries
+- Use Xacro macros to simplify complex URDF definitions
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapters 1-3 on Physical AI, ROS 2 concepts, and Python packages
+- Understand the basics of robot kinematics
+- Have experience with XML syntax
+- Be familiar with 3D coordinate systems and transformations
+
+## Introduction
+
+URDF (Unified Robot Description Format) is the standard format used by ROS to describe robots. It defines the physical and visual properties of a robot in XML format, including its links, joints, inertial properties, visual meshes, and collision geometries. For humanoid robots, URDF becomes particularly important as it describes the complex kinematic structure with multiple degrees of freedom.
+
+A humanoid robot URDF typically includes:
+- A base/torso link representing the main body
+- Links for limbs (arms, legs) with appropriate joint connections
+- Proper inertial properties for realistic simulation
+- Visual and collision geometries for rendering and physics
+
+## Core Concepts
+
+### URDF Structure
+
+A URDF file consists of:
+- **Links**: Rigid bodies that make up the robot structure
+- **Joints**: Connections between links that define movement constraints
+- **Materials**: Color and appearance properties for visualization
+- **Inertial Properties**: Mass, center of mass, and inertia tensor for physics simulation
+
+### Link Components
+
+Each link in a URDF file can contain:
+- **Visual**: How the link appears in visualizations
+- **Collision**: Geometry used for collision detection
+- **Inertial**: Physical properties for dynamics simulation
+
+### Joint Types
+
+Common joint types in humanoid robots:
+- **Revolute**: Rotational joint with limited range
+- **Continuous**: Rotational joint without limits
+- **Prismatic**: Linear sliding joint
+- **Fixed**: Rigid connection with no movement
+
+### Kinematic Chains
+
+Humanoid robots consist of multiple kinematic chains:
+- Arms: shoulder → elbow → wrist → hand
+- Legs: hip → knee → ankle → foot
+- Spine: torso segments connected for upper body movement
+
+## Code Examples
+
+### Basic URDF Structure
+
+```xml
+<?xml version="1.0"?>
+<robot name="simple_humanoid">
+  <!-- Base link -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.5 0.3 0.2"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 0.8"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.5 0.3 0.2"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="10.0"/>
+      <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0"/>
+    </inertial>
+  </link>
+
+  <!-- Leg link example -->
+  <link name="leg_link">
+    <visual>
+      <geometry>
+        <cylinder radius="0.05" length="0.5"/>
+      </geometry>
+      <material name="grey">
+        <color rgba="0.5 0.5 0.5 0.8"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.05" length="0.5"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="2.0"/>
+      <inertia ixx="0.1" ixy="0.0" ixz="0.0" iyy="0.1" iyz="0.0" izz="0.01"/>
+    </inertial>
+  </link>
+
+  <!-- Joint connecting base to leg -->
+  <joint name="hip_joint" type="revolute">
+    <parent link="base_link"/>
+    <child link="leg_link"/>
+    <origin xyz="0 -0.2 -0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.57" upper="1.57" effort="100" velocity="1.0"/>
+    <dynamics damping="0.5" friction="0.1"/>
+  </joint>
+</robot>
+```
+
+### Complete Humanoid Arm URDF
+
+```xml
+<?xml version="1.0"?>
+<robot name="humanoid_arm">
+
+  <!-- Shoulder complex -->
+  <link name="torso">
+    <visual>
+      <geometry>
+        <box size="0.3 0.2 0.5"/>
+      </geometry>
+      <material name="beige">
+        <color rgba="0.9 0.9 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.3 0.2 0.5"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="5.0"/>
+      <inertia ixx="0.2" ixy="0.0" ixz="0.0" iyy="0.2" iyz="0.0" izz="0.1"/>
+    </inertial>
+  </link>
+
+  <!-- Shoulder joint and link -->
+  <joint name="shoulder_pan_joint" type="revolute">
+    <parent link="torso"/>
+    <child link="shoulder"/>
+    <origin xyz="0.15 0 0.1" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-1.57" upper="1.57" effort="50" velocity="2.0"/>
+  </joint>
+
+  <link name="shoulder">
+    <visual>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+      <material name="red">
+        <color rgba="1 0 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <sphere radius="0.06"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <!-- Upper arm -->
+  <joint name="shoulder_lift_joint" type="revolute">
+    <parent link="shoulder"/>
+    <child link="upper_arm"/>
+    <origin xyz="0 0 -0.15" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.0" upper="1.5" effort="40" velocity="2.0"/>
+  </joint>
+
+  <link name="upper_arm">
+    <visual>
+      <geometry>
+        <capsule radius="0.05" length="0.25"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <capsule radius="0.05" length="0.25"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.5"/>
+      <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.005"/>
+    </inertial>
+  </link>
+
+  <!-- Elbow joint and forearm -->
+  <joint name="elbow_joint" type="revolute">
+    <parent link="upper_arm"/>
+    <child link="forearm"/>
+    <origin xyz="0 0 -0.3" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-2.5" upper="0.5" effort="30" velocity="2.0"/>
+  </joint>
+
+  <link name="forearm">
+    <visual>
+      <geometry>
+        <capsule radius="0.04" length="0.2"/>
+      </geometry>
+      <material name="green">
+        <color rgba="0 1 0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <capsule radius="0.04" length="0.2"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.005" ixy="0.0" ixz="0.0" iyy="0.005" iyz="0.0" izz="0.003"/>
+    </inertial>
+  </link>
+
+</robot>
+```
+
+### Xacro Example for Simplification
+
+```xml
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="xacro_humanoid_arm">
+
+  <!-- Properties -->
+  <xacro:property name="M_PI" value="3.1415926535897931" />
+  <xacro:property name="arm_length" value="0.3" />
+  <xacro:property name="arm_radius" value="0.05" />
+
+  <!-- Macro for creating arm segments -->
+  <xacro:macro name="arm_segment" params="name parent xyz length radius">
+    <joint name="${name}_joint" type="revolute">
+      <parent link="${parent}"/>
+      <child link="${name}_link"/>
+      <origin xyz="${xyz}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit lower="-2.0" upper="1.5" effort="40" velocity="2.0"/>
+    </joint>
+
+    <link name="${name}_link">
+      <visual>
+        <geometry>
+          <capsule radius="${radius}" length="${length}"/>
+        </geometry>
+        <material name="blue">
+          <color rgba="0 0 1 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <capsule radius="${radius}" length="${length}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="${length * 5}"/>
+        <inertia ixx="${length * 0.05}" ixy="0.0" ixz="0.0"
+                 iyy="${length * 0.05}" iyz="0.0" izz="${length * 0.02}"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <!-- Base link -->
+  <link name="torso">
+    <visual>
+      <geometry>
+        <box size="0.3 0.2 0.5"/>
+      </geometry>
+      <material name="beige">
+        <color rgba="0.9 0.9 0.7 1.0"/>
+      </material>
+    </visual>
+    <inertial>
+      <mass value="5.0"/>
+      <inertia ixx="0.2" ixy="0.0" ixz="0.0" iyy="0.2" iyz="0.0" izz="0.1"/>
+    </inertial>
+  </link>
+
+  <!-- Use macro to create upper arm -->
+  <xacro:arm_segment name="upper_arm" parent="torso"
+                     xyz="0.15 0 -0.1" length="0.3" radius="0.05"/>
+
+</robot>
+```
+
+## Diagrams and Visuals
+
+![URDF Structure](/img/diagrams/URDF-structure.png)
+
+*Figure 1: The hierarchical structure of a URDF file showing links connected by joints.*
+
+## Hands-On Lab
+
+### Exercise 1: Create a Simple Humanoid Leg
+Create a URDF file for a humanoid leg with hip, knee, and ankle joints:
+
+1. Define the hip joint connecting to the torso
+2. Add knee joint for the lower leg
+3. Include ankle joint for foot orientation
+4. Set appropriate limits and physical properties
+
+### Exercise 2: Xacro Macros for Symmetry
+Use Xacro to create symmetrical left and right arms:
+
+1. Create a macro for an arm segment
+2. Instantiate both left and right arms using the macro
+3. Apply appropriate transformations for mirror positioning
+4. Verify the resulting URDF is valid
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: URDF fails to parse**: Check XML syntax, ensure all tags are properly closed, and verify attribute values are properly quoted.
+- **Issue: Robot appears distorted in RViz**: Verify origin transformations and joint axis orientations are correct.
+- **Issue: Physics simulation is unstable**: Check that inertial properties are physically plausible and masses are reasonable.
+- **Issue: Joints don't move as expected**: Verify joint limits, types, and axis directions match intended movement.
+
+## Summary
+
+This chapter covered the fundamentals of creating and working with URDF files for humanoid robots. We explored the structure of URDF files, different joint types, and how to define physical properties for realistic simulation. Understanding URDF is crucial for creating robots that can be properly simulated and controlled in ROS environments.
+
+## Further Reading
+
+- ROS URDF Documentation
+- Xacro Tutorial and Best Practices
+- Robot Kinematics and Dynamics
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Create a complete URDF for a simple humanoid with torso, head, 2 arms, and 2 legs.
+2. Use Xacro to parameterize the size of the humanoid robot.
+3. Add proper collision geometries that differ from visual geometries for performance optimization.
+
+<!-- Optional: Add custom components for interactive elements -->

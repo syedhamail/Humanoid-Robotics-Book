@@ -1,0 +1,1110 @@
+---
+title: "Cognitive Planning with LLMs (Natural Language → ROS Actions)"
+description: Implementing cognitive planning using Large Language Models to translate natural language into ROS actions for humanoid robots
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the principles of cognitive planning for robotics using LLMs
+- Implement LLM-based command interpretation and action generation
+- Design memory and reasoning systems for contextual understanding
+- Create adaptive planning systems that learn from experience
+- Integrate LLMs with ROS action servers for complex behaviors
+- Evaluate and optimize LLM-based planning performance
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1-4, especially Chapters 1-2 on VLA and voice commands
+- Understand the basics of Large Language Models and their applications
+- Be familiar with ROS 2 action servers and service clients
+- Have experience with Python and asynchronous programming
+- Understand cognitive architectures and planning algorithms
+- Be comfortable with context management and state representation
+
+## Introduction
+
+Cognitive planning with Large Language Models (LLMs) represents a paradigm shift in how humanoid robots interpret and execute natural language commands. Traditional robotics approaches rely on rigid command parsers and predefined action mappings, limiting the robot's ability to understand complex, nuanced, or context-dependent instructions.
+
+LLM-based cognitive planning can enhance robot capabilities for:
+- **Interpret complex language**: Potentially understand multi-step instructions, conditional commands, and implicit goals, though with varying reliability
+- **Maintain context**: Help maintain interaction context, though with limitations due to context window constraints
+- **Suggest actions**: Provide action suggestions based on robot capabilities and environmental constraints, requiring validation before execution
+- **Handle ambiguity**: Potentially ask for clarification or make assumptions when commands are unclear, though with risk of misinterpretation
+
+The cognitive planning pipeline involves several key components:
+- **Language Understanding**: Converting natural language to structured representations
+- **Context Management**: Maintaining situational awareness and memory
+- **Action Planning**: Generating sequences of actions to achieve goals
+- **Execution Monitoring**: Tracking progress and adapting to changes
+- **Learning**: Improving future performance based on experience
+
+## Core Concepts
+
+### Cognitive Architecture for Robotics
+
+A cognitive architecture for LLM-based robotics includes:
+- **Perception System**: Processing sensory input and environmental state
+- **Memory System**: Storing episodic, semantic, and procedural knowledge
+- **Reasoning Engine**: Making decisions based on current state and goals
+- **Action Generator**: Converting high-level goals to executable actions
+- **Learning System**: Adapting behavior based on experience
+
+### LLM Integration Patterns
+
+Effective LLM integration in robotics follows these patterns:
+- **Prompt Engineering**: Crafting prompts that elicit appropriate robotic actions
+- **Structured Output**: Ensuring LLMs generate consistent, parseable outputs
+- **Chain of Thought**: Breaking complex tasks into intermediate reasoning steps
+- **Few-shot Learning**: Providing examples to guide appropriate behavior
+- **Context Window Management**: Handling long-term memory and context
+
+### Memory Systems
+
+Cognitive planning requires sophisticated memory management:
+- **Episodic Memory**: Storing past experiences and outcomes
+- **Semantic Memory**: Representing general knowledge about the world
+- **Procedural Memory**: Storing learned procedures and action sequences
+- **Working Memory**: Maintaining current context and goals
+- **Declarative Memory**: Storing facts about objects, locations, and capabilities
+
+### Reasoning and Inference
+
+LLM-based reasoning for robotics includes:
+- **Logical Reasoning**: Applying rules and constraints to select actions
+- **Spatial Reasoning**: Understanding object relationships and navigation
+- **Temporal Reasoning**: Sequencing actions over time
+- **Causal Reasoning**: Understanding cause-effect relationships
+- **Social Reasoning**: Understanding human intentions and social norms
+
+## Code Examples
+
+### LLM-Based Cognitive Planner
+
+```python
+#!/usr/bin/env python3
+
+"""
+LLM-Based Cognitive Planning System for Humanoid Robots
+This module implements a cognitive planning system that translates natural language
+into ROS actions using Large Language Models.
+"""
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from std_msgs.msg import String, Bool, Int32
+from geometry_msgs.msg import Pose, PoseStamped, Twist
+from action_msgs.msg import GoalStatus
+from sensor_msgs.msg import Image
+
+import openai
+import json
+import re
+import time
+import threading
+import asyncio
+from typing import Dict, List, Tuple, Optional, Any, Union
+from dataclasses import dataclass, field
+from datetime import datetime
+import copy
+
+
+@dataclass
+class RobotCapability:
+    """
+    Represents a robot's capability.
+    """
+    name: str
+    parameters: List[str]
+    description: str
+    preconditions: List[str]
+    effects: List[str]
+
+
+@dataclass
+class ActionStep:
+    """
+    Represents a single action step in a plan.
+    """
+    action_type: str
+    parameters: Dict[str, Any]
+    description: str
+    preconditions: List[str] = field(default_factory=list)
+    effects: List[str] = field(default_factory=list)
+    priority: int = 1
+    estimated_duration: float = 1.0
+
+
+@dataclass
+class Plan:
+    """
+    Represents a complete action plan.
+    """
+    id: str
+    steps: List[ActionStep]
+    original_command: str
+    context: Dict[str, Any]
+    created_at: float
+    status: str = "pending"
+
+
+@dataclass
+class MemoryEntry:
+    """
+    Represents an entry in the robot's memory.
+    """
+    id: str
+    content: str
+    timestamp: float
+    category: str  # 'perceptual', 'action', 'social', 'knowledge'
+    importance: float = 1.0
+    tags: List[str] = field(default_factory=list)
+
+
+class MemorySystem:
+    """
+    Memory system for cognitive planning.
+    """
+
+    def __init__(self, max_entries: int = 1000):
+        self.episodic_memory: List[MemoryEntry] = []
+        self.semantic_memory: Dict[str, Any] = {}
+        self.procedural_memory: Dict[str, List[ActionStep]] = {}
+        self.working_memory: Dict[str, Any] = {}
+        self.max_entries = max_entries
+
+    def add_episode(self, content: str, category: str = "action", tags: List[str] = None) -> str:
+        """
+        Add an episode to episodic memory.
+        """
+        entry = MemoryEntry(
+            id=f"ep_{int(time.time())}_{len(self.episodic_memory)}",
+            content=content,
+            timestamp=time.time(),
+            category=category,
+            tags=tags or [],
+            importance=1.0
+        )
+        self.episodic_memory.append(entry)
+
+        # Trim memory if too large
+        if len(self.episodic_memory) > self.max_entries:
+            self.episodic_memory = self.episodic_memory[-self.max_entries:]
+
+        return entry.id
+
+    def add_fact(self, key: str, value: Any):
+        """
+        Add a fact to semantic memory.
+        """
+        self.semantic_memory[key] = value
+
+    def add_procedure(self, name: str, steps: List[ActionStep]):
+        """
+        Add a procedure to procedural memory.
+        """
+        self.procedural_memory[name] = steps
+
+    def get_recent_episodes(self, category: str = None, limit: int = 10) -> List[MemoryEntry]:
+        """
+        Get recent episodes from memory.
+        """
+        episodes = self.episodic_memory[-limit:]
+        if category:
+            episodes = [ep for ep in episodes if ep.category == category]
+        return episodes
+
+    def search_episodes(self, query: str, category: str = None, limit: int = 5) -> List[MemoryEntry]:
+        """
+        Search episodes containing query term.
+        """
+        results = []
+        for entry in reversed(self.episodic_memory):  # Most recent first
+            if query.lower() in entry.content.lower():
+                if category is None or entry.category == category:
+                    results.append(entry)
+                    if len(results) >= limit:
+                        break
+        return results
+
+
+class ReasoningEngine:
+    """
+    Reasoning engine for cognitive planning.
+    """
+
+    def __init__(self, memory_system: MemorySystem):
+        self.memory_system = memory_system
+        self.belief_state = {}
+        self.rules = []
+        self.inference_cache = {}
+
+    def update_beliefs(self, observations: Dict[str, Any]):
+        """
+        Update belief state based on observations.
+        """
+        for key, value in observations.items():
+            self.belief_state[key] = value
+
+    def infer_possible_actions(self, goal: str) -> List[str]:
+        """
+        Infer possible actions to achieve a goal based on current beliefs.
+        """
+        possible_actions = []
+
+        # Check if we have a stored procedure for this goal
+        for proc_name, proc_steps in self.memory_system.procedural_memory.items():
+            if goal.lower() in proc_name.lower():
+                possible_actions.append(proc_name)
+
+        # Apply logical rules
+        for rule in self.rules:
+            if self.evaluate_rule(rule, goal):
+                possible_actions.extend(rule.get('actions', []))
+
+        return possible_actions
+
+    def evaluate_rule(self, rule: Dict[str, Any], goal: str) -> bool:
+        """
+        Evaluate if a rule applies to the current situation.
+        """
+        # This is a simplified rule evaluation
+        # In a real implementation, this would be more sophisticated
+        conditions = rule.get('conditions', [])
+        for condition in conditions:
+            if not self.check_condition(condition):
+                return False
+        return True
+
+    def check_condition(self, condition: str) -> bool:
+        """
+        Check if a condition is true given current beliefs.
+        """
+        # Simplified condition checking
+        # In a real implementation, this would use a proper logical reasoner
+        return condition in self.belief_state or any(condition in str(val) for val in self.belief_state.values())
+
+
+class LLMBasedCognitivePlanner(Node):
+    """
+    ROS 2 node for cognitive planning using Large Language Models.
+    """
+
+    def __init__(self):
+        super().__init__('llm_cognitive_planner')
+
+        # LLM configuration
+        self.llm_model = "gpt-3.5-turbo"
+        self.max_tokens = 800
+        self.temperature = 0.3
+
+        # Initialize memory system
+        self.memory_system = MemorySystem()
+        self.reasoning_engine = ReasoningEngine(self.memory_system)
+
+        # Publishers
+        self.action_plan_pub = self.create_publisher(String, '/action_plans', 10)
+        self.status_pub = self.create_publisher(String, '/cognitive_status', 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.nav_goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
+
+        # Subscribers
+        self.natural_lang_sub = self.create_subscription(
+            String, '/natural_language_commands', self.natural_language_callback, 10)
+        self.context_update_sub = self.create_subscription(
+            String, '/context_updates', self.context_update_callback, 10)
+
+        # Internal state
+        self.robot_capabilities = self.initialize_capabilities()
+        self.active_plans = {}
+        self.current_plan = None
+        self.execution_lock = threading.Lock()
+
+        # Initialize belief state with robot info
+        self.reasoning_engine.update_beliefs({
+            'robot_type': 'humanoid',
+            'capabilities': [cap.name for cap in self.robot_capabilities],
+            'location': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+            'battery_level': 100.0,
+            'current_task': 'idle'
+        })
+
+        # Add some procedural memories
+        self.add_default_procedures()
+
+        self.get_logger().info('LLM Cognitive Planner initialized')
+
+    def initialize_capabilities(self) -> List[RobotCapability]:
+        """
+        Initialize robot capabilities.
+        """
+        capabilities = [
+            RobotCapability(
+                name="move_forward",
+                parameters=["distance_meters"],
+                description="Move robot forward by specified distance",
+                preconditions=["robot_is_active"],
+                effects=["robot_position_changed"]
+            ),
+            RobotCapability(
+                name="move_backward",
+                parameters=["distance_meters"],
+                description="Move robot backward by specified distance",
+                preconditions=["robot_is_active"],
+                effects=["robot_position_changed"]
+            ),
+            RobotCapability(
+                name="turn_left",
+                parameters=["angle_degrees"],
+                description="Turn robot left by specified angle",
+                preconditions=["robot_is_active"],
+                effects=["robot_orientation_changed"]
+            ),
+            RobotCapability(
+                name="turn_right",
+                parameters=["angle_degrees"],
+                description="Turn robot right by specified angle",
+                preconditions=["robot_is_active"],
+                effects=["robot_orientation_changed"]
+            ),
+            RobotCapability(
+                name="navigate_to",
+                parameters=["location_name"],
+                description="Navigate robot to specified location",
+                preconditions=["robot_is_active", "location_known"],
+                effects=["robot_at_location"]
+            ),
+            RobotCapability(
+                name="pick_up_object",
+                parameters=["object_name"],
+                description="Pick up specified object",
+                preconditions=["robot_is_active", "object_visible", "hand_free"],
+                effects=["object_in_hand"]
+            ),
+            RobotCapability(
+                name="place_object",
+                parameters=["object_name", "location_name"],
+                description="Place object at specified location",
+                preconditions=["robot_is_active", "object_in_hand"],
+                effects=["object_placed", "hand_free"]
+            ),
+            RobotCapability(
+                name="greet_person",
+                parameters=["person_name"],
+                description="Greet specified person",
+                preconditions=["robot_is_active", "person_visible"],
+                effects=["social_interaction_completed"]
+            ),
+            RobotCapability(
+                name="follow_person",
+                parameters=["person_name"],
+                description="Follow specified person",
+                preconditions=["robot_is_active", "person_tracked"],
+                effects=["following_person"]
+            ),
+            RobotCapability(
+                name="stop_robot",
+                parameters=[],
+                description="Stop current robot actions",
+                preconditions=["robot_is_active"],
+                effects=["robot_stopped"]
+            )
+        ]
+        return capabilities
+
+    def add_default_procedures(self):
+        """
+        Add some default procedures to memory.
+        """
+        # Example: Basic greeting procedure
+        greeting_procedure = [
+            ActionStep(
+                action_type="greet_person",
+                parameters={"person_name": "unknown"},
+                description="Greet the person",
+                preconditions=["person_visible"],
+                effects=["greeting_completed"]
+            )
+        ]
+        self.memory_system.add_procedure("greeting", greeting_procedure)
+
+        # Example: Basic navigation procedure
+        navigation_procedure = [
+            ActionStep(
+                action_type="navigate_to",
+                parameters={"location_name": "unknown"},
+                description="Navigate to destination",
+                preconditions=["location_known"],
+                effects=["at_destination"]
+            )
+        ]
+        self.memory_system.add_procedure("navigation", navigation_procedure)
+
+    def natural_language_callback(self, msg: String):
+        """
+        Process natural language commands.
+        """
+        command = msg.data
+        self.get_logger().info(f'Received natural language command: {command}')
+
+        # Add to memory
+        self.memory_system.add_episode(
+            f"Received command: {command}",
+            category="command",
+            tags=["input"]
+        )
+
+        # Generate plan using LLM
+        plan = self.generate_plan_with_llm(command)
+
+        if plan:
+            # Execute plan
+            self.execute_plan(plan)
+        else:
+            self.get_logger().error(f'Failed to generate plan for command: {command}')
+            self.publish_status(f'Could not understand command: {command}')
+
+    def context_update_callback(self, msg: String):
+        """
+        Process context updates.
+        """
+        try:
+            context_data = json.loads(msg.data)
+            self.reasoning_engine.update_beliefs(context_data)
+            self.get_logger().info(f'Updated beliefs: {context_data}')
+        except json.JSONDecodeError:
+            self.get_logger().error(f'Invalid context update: {msg.data}')
+
+    def generate_plan_with_llm(self, command: str) -> Optional[Plan]:
+        """
+        Generate an action plan using LLM.
+        """
+        try:
+            # Prepare context for LLM
+            context = self.prepare_context_for_llm(command)
+
+            # Call LLM to generate plan
+            llm_response = self.call_llm_for_planning(context)
+
+            if llm_response:
+                # Parse LLM response into plan
+                plan = self.parse_llm_response_to_plan(llm_response, command)
+                return plan
+
+        except Exception as e:
+            self.get_logger().error(f'Error generating plan with LLM: {e}')
+
+        return None
+
+    def prepare_context_for_llm(self, command: str) -> Dict[str, Any]:
+        """
+        Prepare context for LLM planning.
+        """
+        # Get relevant memories
+        recent_memories = self.memory_system.get_recent_episodes(limit=5)
+        relevant_memories = self.memory_system.search_episodes(command, limit=3)
+
+        context = {
+            "command": command,
+            "robot_capabilities": [cap.__dict__ for cap in self.robot_capabilities],
+            "current_beliefs": self.reasoning_engine.belief_state,
+            "recent_memories": [mem.__dict__ for mem in recent_memories],
+            "relevant_memories": [mem.__dict__ for mem in relevant_memories],
+            "environment_context": self.get_environment_context(),
+            "instructions": self.get_llm_instructions()
+        }
+
+        return context
+
+    def get_environment_context(self) -> Dict[str, Any]:
+        """
+        Get current environment context.
+        """
+        # In a real implementation, this would get data from sensors
+        return {
+            "room_layout": "unknown",
+            "visible_objects": ["table", "chair", "cup"],
+            "known_locations": ["kitchen", "living_room", "bedroom"],
+            "obstacles": [],
+            "other_agents": []
+        }
+
+    def get_llm_instructions(self) -> str:
+        """
+        Get instructions for the LLM on how to generate plans.
+        """
+        instructions = """
+        You are a cognitive planning system for a humanoid robot. Your task is to convert natural language commands into sequences of robot actions.
+
+        Available actions and their parameters:
+        - move_forward(distance_meters): Move robot forward by specified distance
+        - move_backward(distance_meters): Move robot backward by specified distance
+        - turn_left(angle_degrees): Turn robot left by specified angle
+        - turn_right(angle_degrees): Turn robot right by specified angle
+        - navigate_to(location_name): Navigate robot to specified location
+        - pick_up_object(object_name): Pick up specified object
+        - place_object(object_name, location_name): Place object at location
+        - greet_person(person_name): Greet specified person
+        - follow_person(person_name): Follow specified person
+        - stop_robot(): Stop current robot actions
+
+        Response format: Return a JSON object with the following structure:
+        {
+          "steps": [
+            {
+              "action_type": "action_name",
+              "parameters": {"param1": "value1", "param2": "value2"},
+              "description": "Brief description of the action",
+              "preconditions": ["condition1", "condition2"],
+              "effects": ["effect1", "effect2"],
+              "estimated_duration": 1.0
+            }
+          ]
+        }
+
+        Consider the robot's capabilities, current state, and environment when generating plans.
+        Be specific with parameters and provide realistic durations.
+        """
+        return instructions
+
+    def call_llm_for_planning(self, context: Dict[str, Any]) -> Optional[str]:
+        """
+        Call LLM to generate a plan.
+        """
+        try:
+            # Create prompt
+            prompt = f"""
+            Natural Language Command: {context['command']}
+
+            Robot Capabilities: {json.dumps(context['robot_capabilities'], indent=2)}
+            Current Beliefs: {json.dumps(context['current_beliefs'], indent=2)}
+            Recent Memories: {json.dumps(context['recent_memories'], indent=2)}
+            Relevant Memories: {json.dumps(context['relevant_memories'], indent=2)}
+            Environment Context: {json.dumps(context['environment_context'], indent=2)}
+
+            Instructions: {context['instructions']}
+
+            Generate a detailed action plan in the specified JSON format.
+            """
+
+            # Call OpenAI API
+            response = openai.ChatCompletion.create(
+                model=self.llm_model,
+                messages=[
+                    {"role": "system", "content": "You are a cognitive planning system for a humanoid robot. Generate action plans from natural language commands."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
+            )
+
+            plan_response = response.choices[0].message.content
+            self.get_logger().debug(f'LLM response: {plan_response}')
+            return plan_response
+
+        except Exception as e:
+            self.get_logger().error(f'Error calling LLM: {e}')
+
+            # Return a mock response for demonstration
+            return self.generate_mock_response(context['command'])
+
+    def generate_mock_response(self, command: str) -> str:
+        """
+        Generate a mock response for demonstration when API is not available.
+        """
+        import random
+
+        # Simple rule-based parsing for demo
+        command_lower = command.lower()
+        steps = []
+
+        if 'move forward' in command_lower or 'go forward' in command_lower:
+            distance = 1.0
+            match = re.search(r'(/d+(?:/./d+)?)/s*(meter|m)', command_lower)
+            if match:
+                distance = float(match.group(1))
+            steps.append({
+                "action_type": "move_forward",
+                "parameters": {"distance_meters": distance},
+                "description": f"Move forward by {distance} meters",
+                "preconditions": ["robot_is_active"],
+                "effects": ["robot_position_changed"],
+                "estimated_duration": distance / 0.3  # Assuming 0.3 m/s
+            })
+        elif 'turn left' in command_lower:
+            angle = 90
+            match = re.search(r'(/d+(?:/./d+)?)/s*(degree|deg)', command_lower)
+            if match:
+                angle = float(match.group(1))
+            steps.append({
+                "action_type": "turn_left",
+                "parameters": {"angle_degrees": angle},
+                "description": f"Turn left by {angle} degrees",
+                "preconditions": ["robot_is_active"],
+                "effects": ["robot_orientation_changed"],
+                "estimated_duration": angle / 90.0  # Assuming 90 deg/sec
+            })
+        elif 'turn right' in command_lower:
+            angle = 90
+            match = re.search(r'(/d+(?:/./d+)?)/s*(degree|deg)', command_lower)
+            if match:
+                angle = float(match.group(1))
+            steps.append({
+                "action_type": "turn_right",
+                "parameters": {"angle_degrees": angle},
+                "description": f"Turn right by {angle} degrees",
+                "preconditions": ["robot_is_active"],
+                "effects": ["robot_orientation_changed"],
+                "estimated_duration": angle / 90.0
+            })
+        elif 'go to' in command_lower or 'navigate to' in command_lower:
+            location = "unknown"
+            match = re.search(r'(?:go to|navigate to|move to)/s+(.+?)(?:/s|$)', command_lower)
+            if match:
+                location = match.group(1).strip()
+            steps.append({
+                "action_type": "navigate_to",
+                "parameters": {"location_name": location},
+                "description": f"Navigate to {location}",
+                "preconditions": ["robot_is_active", "location_known"],
+                "effects": ["robot_at_location"],
+                "estimated_duration": 10.0  # Variable time
+            })
+        elif 'pick up' in command_lower or 'grasp' in command_lower:
+            obj = "unknown object"
+            match = re.search(r'(?:pick up|grasp|take)/s+(.+?)(?:/s|$)', command_lower)
+            if match:
+                obj = match.group(1).strip()
+            steps.append({
+                "action_type": "pick_up_object",
+                "parameters": {"object_name": obj},
+                "description": f"Pick up {obj}",
+                "preconditions": ["robot_is_active", "object_visible", "hand_free"],
+                "effects": ["object_in_hand"],
+                "estimated_duration": 3.0
+            })
+        elif 'stop' in command_lower or 'halt' in command_lower:
+            steps.append({
+                "action_type": "stop_robot",
+                "parameters": {},
+                "description": "Stop robot movement",
+                "preconditions": ["robot_is_active"],
+                "effects": ["robot_stopped"],
+                "estimated_duration": 0.1
+            })
+        else:
+            # Default response
+            steps.append({
+                "action_type": "stop_robot",
+                "parameters": {},
+                "description": "Stop robot - command not understood",
+                "preconditions": ["robot_is_active"],
+                "effects": ["robot_stopped"],
+                "estimated_duration": 0.1
+            })
+
+        mock_response = {
+            "steps": steps
+        }
+
+        return json.dumps(mock_response, indent=2)
+
+    def parse_llm_response_to_plan(self, response: str, original_command: str) -> Optional[Plan]:
+        """
+        Parse LLM response into an executable plan.
+        """
+        try:
+            # Extract JSON from response if it contains other text
+            json_match = re.search(r'/{.*/}', response, re.DOTALL)
+            if json_match:
+                response = json_match.group(0)
+
+            plan_data = json.loads(response)
+
+            # Create action steps
+            steps = []
+            for step_data in plan_data.get('steps', []):
+                action_step = ActionStep(
+                    action_type=step_data.get('action_type', ''),
+                    parameters=step_data.get('parameters', {}),
+                    description=step_data.get('description', ''),
+                    preconditions=step_data.get('preconditions', []),
+                    effects=step_data.get('effects', []),
+                    estimated_duration=step_data.get('estimated_duration', 1.0)
+                )
+                steps.append(action_step)
+
+            # Create plan
+            plan_id = f"plan_{int(time.time())}_{hash(original_command) % 10000}"
+            plan = Plan(
+                id=plan_id,
+                steps=steps,
+                original_command=original_command,
+                context=copy.deepcopy(self.reasoning_engine.belief_state),
+                created_at=time.time()
+            )
+
+            # Publish plan
+            plan_msg = String()
+            plan_msg.data = json.dumps({
+                'id': plan.id,
+                'original_command': plan.original_command,
+                'steps': [{
+                    'action_type': s.action_type,
+                    'parameters': s.parameters,
+                    'description': s.description,
+                    'preconditions': s.preconditions,
+                    'effects': s.effects,
+                    'estimated_duration': s.estimated_duration
+                } for s in steps]
+            }, indent=2)
+            self.action_plan_pub.publish(plan_msg)
+
+            # Add to memory
+            self.memory_system.add_episode(
+                f"Generated plan for: {original_command}",
+                category="planning",
+                tags=["plan_generated"]
+            )
+
+            return plan
+
+        except Exception as e:
+            self.get_logger().error(f'Error parsing LLM response: {e}')
+            self.get_logger().debug(f'LLM response: {response}')
+            return None
+
+    def execute_plan(self, plan: Plan):
+        """
+        Execute the generated action plan.
+        """
+        with self.execution_lock:
+            self.current_plan = plan
+            self.get_logger().info(f'Executing plan {plan.id} with {len(plan.steps)} steps')
+
+            # Update plan status
+            plan.status = "executing"
+            self.reasoning_engine.update_beliefs({"current_task": plan.original_command})
+
+            for i, step in enumerate(plan.steps):
+                self.get_logger().info(f'Executing step {i+1}/{len(plan.steps)}: {step.description}')
+
+                # Check preconditions
+                if not self.check_preconditions(step):
+                    self.get_logger().error(f'Preconditions not met for step: {step.description}')
+                    self.handle_precondition_failure(plan, i)
+                    break
+
+                # Execute step
+                success = self.execute_action_step(step)
+
+                if not success:
+                    self.get_logger().error(f'Failed to execute step: {step.description}')
+                    self.handle_execution_failure(plan, i)
+                    break
+
+                # Update effects
+                self.update_effects(step)
+
+                # Add to memory
+                self.memory_system.add_episode(
+                    f"Executed step: {step.description}",
+                    category="action",
+                    tags=["step_executed"]
+                )
+
+            # Update plan status
+            plan.status = "completed" if i == len(plan.steps) - 1 else "failed"
+            self.current_plan = None
+
+            # Update beliefs
+            self.reasoning_engine.update_beliefs({"current_task": "idle"})
+            self.publish_status(f'Plan {plan.status}: {plan.original_command}')
+
+    def check_preconditions(self, step: ActionStep) -> bool:
+        """
+        Check if preconditions for a step are met.
+        """
+        for precondition in step.preconditions:
+            if not self.evaluate_precondition(precondition):
+                return False
+        return True
+
+    def evaluate_precondition(self, precondition: str) -> bool:
+        """
+        Evaluate a specific precondition against current beliefs.
+        """
+        # Simplified precondition evaluation
+        # In a real implementation, this would be more sophisticated
+        return precondition in self.reasoning_engine.belief_state or /
+               any(precondition in str(val) for val in self.reasoning_engine.belief_state.values())
+
+    def execute_action_step(self, step: ActionStep) -> bool:
+        """
+        Execute a single action step.
+        """
+        try:
+            # Map action type to actual robot action
+            action_map = {
+                'move_forward': self.move_forward,
+                'move_backward': self.move_backward,
+                'turn_left': self.turn_left,
+                'turn_right': self.turn_right,
+                'navigate_to': self.navigate_to,
+                'pick_up_object': self.pick_up_object,
+                'place_object': self.place_object,
+                'greet_person': self.greet_person,
+                'follow_person': self.follow_person,
+                'stop_robot': self.stop_robot
+            }
+
+            action_func = action_map.get(step.action_type)
+            if action_func:
+                # Call the action function with parameters
+                action_func(**step.parameters)
+                return True
+            else:
+                self.get_logger().error(f'Unknown action type: {step.action_type}')
+                return False
+
+        except Exception as e:
+            self.get_logger().error(f'Error executing action step: {e}')
+            return False
+
+    def update_effects(self, step: ActionStep):
+        """
+        Update belief state with effects of action.
+        """
+        for effect in step.effects:
+            # Add effect to beliefs
+            self.reasoning_engine.belief_state[effect] = True
+
+            # If it's a location change, update position
+            if 'at_location' in effect and 'location_name' in step.parameters:
+                location = step.parameters['location_name']
+                self.reasoning_engine.belief_state['current_location'] = location
+
+    def handle_precondition_failure(self, plan: Plan, step_idx: int):
+        """
+        Handle failure due to unmet preconditions.
+        """
+        self.get_logger().info(f'Handling precondition failure at step {step_idx}')
+
+        # Try to satisfy preconditions or adapt plan
+        # In a real implementation, this would be more sophisticated
+        self.publish_status(f'Could not satisfy preconditions for step {step_idx + 1}')
+
+    def handle_execution_failure(self, plan: Plan, step_idx: int):
+        """
+        Handle failure during action execution.
+        """
+        self.get_logger().info(f'Handling execution failure at step {step_idx}')
+
+        # Log failure and potentially adapt plan
+        failure_entry = f"Execution failed at step {step_idx + 1}: {plan.steps[step_idx].description}"
+        self.memory_system.add_episode(failure_entry, category="failure", tags=["execution_failure"])
+
+        # Stop robot
+        self.stop_robot()
+
+    def move_forward(self, distance_meters: float = 1.0):
+        """
+        Move robot forward by specified distance.
+        """
+        self.get_logger().info(f'Moving forward by {distance_meters} meters')
+
+        speed = 0.3  # m/s
+        duration = distance_meters / speed
+
+        cmd = Twist()
+        cmd.linear.x = speed
+        self.cmd_vel_pub.publish(cmd)
+
+        time.sleep(duration)
+        self.stop_robot()
+
+    def move_backward(self, distance_meters: float = 1.0):
+        """
+        Move robot backward by specified distance.
+        """
+        self.get_logger().info(f'Moving backward by {distance_meters} meters')
+
+        speed = 0.3  # m/s
+        duration = distance_meters / speed
+
+        cmd = Twist()
+        cmd.linear.x = -speed
+        self.cmd_vel_pub.publish(cmd)
+
+        time.sleep(duration)
+        self.stop_robot()
+
+    def turn_left(self, angle_degrees: float = 90.0):
+        """
+        Turn robot left by specified angle.
+        """
+        self.get_logger().info(f'Turning left by {angle_degrees} degrees')
+
+        angle_rad = angle_degrees * 3.14159 / 180.0
+        angular_speed = 0.5  # rad/s
+        duration = angle_rad / angular_speed
+
+        cmd = Twist()
+        cmd.angular.z = angular_speed
+        self.cmd_vel_pub.publish(cmd)
+
+        time.sleep(duration)
+        self.stop_robot()
+
+    def turn_right(self, angle_degrees: float = 90.0):
+        """
+        Turn robot right by specified angle.
+        """
+        self.get_logger().info(f'Turning right by {angle_degrees} degrees')
+
+        angle_rad = angle_degrees * 3.14159 / 180.0
+        angular_speed = 0.5  # rad/s
+        duration = angle_rad / angular_speed
+
+        cmd = Twist()
+        cmd.angular.z = -angular_speed
+        self.cmd_vel_pub.publish(cmd)
+
+        time.sleep(duration)
+        self.stop_robot()
+
+    def navigate_to(self, location_name: str):
+        """
+        Navigate robot to specified location.
+        """
+        self.get_logger().info(f'Navigating to {location_name}')
+
+        # In a real implementation, this would use navigation stack
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.header.frame_id = 'map'
+
+        # Map location names to coordinates (simplified)
+        locations = {
+            'kitchen': (5.0, 2.0),
+            'living_room': (0.0, 0.0),
+            'bedroom': (-3.0, 4.0),
+            'office': (2.0, -2.0)
+        }
+
+        x, y = locations.get(location_name, (1.0, 1.0))
+        goal_msg.pose.position.x = x
+        goal_msg.pose.position.y = y
+        goal_msg.pose.position.z = 0.0
+        goal_msg.pose.orientation.w = 1.0
+
+        self.nav_goal_pub.publish(goal_msg.pose)
+
+    def pick_up_object(self, object_name: str):
+        """
+        Pick up specified object.
+        """
+        self.get_logger().info(f'Attempting to pick up {object_name}')
+
+        # In a real implementation, this would use manipulation stack
+        self.publish_status(f'Picked up {object_name}')
+
+    def place_object(self, object_name: str, location_name: str):
+        """
+        Place object at specified location.
+        """
+        self.get_logger().info(f'Placing {object_name} at {location_name}')
+
+        # In a real implementation, this would use manipulation stack
+        self.publish_status(f'Placed {object_name} at {location_name}')
+
+    def greet_person(self, person_name: str):
+        """
+        Greet specified person.
+        """
+        self.get_logger().info(f'Greeting {person_name}')
+
+        # In a real implementation, this would use speech synthesis
+        self.publish_status(f'Greeting {person_name}')
+
+    def follow_person(self, person_name: str):
+        """
+        Follow specified person.
+        """
+        self.get_logger().info(f'Following {person_name}')
+
+        # In a real implementation, this would use person following algorithms
+        self.publish_status(f'Following {person_name}')
+
+    def stop_robot(self):
+        """
+        Stop robot movement.
+        """
+        cmd = Twist()
+        self.cmd_vel_pub.publish(cmd)
+
+    def publish_status(self, status: str):
+        """
+        Publish status message.
+        """
+        status_msg = String()
+        status_msg.data = status
+        self.status_pub.publish(status_msg)
+
+
+def main(args=None):
+    """
+    Main function to run the LLM cognitive planning node.
+    """
+    rclpy.init(args=args)
+
+    planner_node = LLMBasedCognitivePlanner()
+
+    try:
+        rclpy.spin(planner_node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        planner_node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+
+## Troubleshooting
+
+Common cognitive planning issues and solutions:
+
+- **Issue: LLM API dependency**: Plan for offline operation by implementing fallback rule-based systems or local LLMs for critical functions.
+- **Issue: Network latency/reliability**: Implement caching, local processing for simple commands, and graceful degradation when API is unavailable.
+- **Issue: Cost considerations**: Monitor API usage, implement rate limiting, and consider local alternatives for frequently used commands.
+- **Issue: Interpretation errors**: Add validation steps, confirmation requests for complex commands, and robust error recovery mechanisms.
+- **Issue: Context window limitations**: Implement memory management strategies to handle long-running interactions.
+- **Issue: Safety validation**: Always validate LLM-generated action plans through safety checks before execution to prevent dangerous robot behaviors.
+
+## Summary
+
+This chapter covered the implementation of cognitive planning for humanoid robots using Large Language Models. We explored how LLMs can enhance natural language understanding and action planning, while acknowledging the realistic limitations and challenges. The integration of LLMs with ROS 2 action systems provides enhanced flexibility for interpreting complex commands, though careful implementation is required to ensure reliability and safety in real-world robotics applications.
+
+## Further Reading
+
+- Large Language Models for Robotics
+- Safe AI Integration in Robotics Systems
+- Offline Language Models for Robotics
+- Cognitive Architectures for Autonomous Robots
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a local LLM fallback system for when the cloud API is unavailable.
+2. Design a safety validation layer for LLM-generated action plans.
+3. Create a memory management system that works within context window limitations.

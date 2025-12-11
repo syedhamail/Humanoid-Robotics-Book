@@ -1,0 +1,1102 @@
+---
+title: "Nav2 Deep Dive: Planning Humanoid Walking Paths"
+description: Advanced navigation planning techniques for humanoid robots using Nav2, including footstep planning and balance-aware path generation
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the differences between wheeled robot navigation and humanoid walking
+- Implement footstep planning algorithms for bipedal locomotion
+- Configure Nav2 for humanoid-specific path planning
+- Integrate balance and stability constraints into navigation
+- Plan paths that consider humanoid kinematic constraints
+- Evaluate and optimize humanoid navigation performance
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1-3 on ROS 2 fundamentals, physics simulation, and VSLAM
+- Understand basic navigation concepts and the Nav2 stack
+- Be familiar with humanoid robot kinematics and locomotion
+- Have experience with path planning algorithms
+- Understand the basics of balance and stability in humanoid robots
+
+## Introduction
+
+Navigation for humanoid robots presents unique challenges compared to traditional wheeled robots. While wheeled robots can move continuously in any direction within their configuration space, humanoid robots must plan discrete footsteps that maintain balance and stability. This fundamental difference requires specialized approaches to path planning, obstacle avoidance, and trajectory execution.
+
+The Nav2 stack provides a flexible framework that can be extended for humanoid navigation, but it requires careful configuration and custom plugins to handle the specific requirements of bipedal locomotion. These include:
+
+- **Footstep Planning**: Computing stable footstep sequences
+- **Balance Constraints**: Ensuring the center of mass remains within the support polygon
+- **Kinematic Constraints**: Accounting for joint limits and reachability
+- **Dynamic Stability**: Maintaining stability during walking transitions
+- **Terrain Assessment**: Evaluating walkability of surfaces
+
+This chapter explores advanced techniques for adapting the Nav2 stack to humanoid robot navigation, including custom planners, controllers, and behavior trees that account for the unique characteristics of bipedal locomotion.
+
+## Core Concepts
+
+### Humanoid Navigation vs Wheeled Navigation
+
+Key differences between humanoid and wheeled navigation:
+
+- **Discrete vs Continuous Motion**: Humanoids move in discrete steps rather than continuous motion
+- **Balance Requirements**: Humanoids must maintain balance at all times
+- **Kinematic Constraints**: Limited reach and joint configurations
+- **Dynamic Stability**: Center of mass must remain within support polygon
+- **Terrain Sensitivity**: Surface properties affect walkability
+
+### Footstep Planning Fundamentals
+
+Footstep planning for humanoid robots involves:
+
+- **Stability Assessment**: Ensuring each step maintains balance
+- **Reachability**: Verifying the foot can reach the target position
+- **Step Sequencing**: Planning alternating left/right footsteps
+- **Obstacle Avoidance**: Planning around obstacles while maintaining stability
+- **Optimization**: Finding efficient and safe step sequences
+
+### Balance and Stability Considerations
+
+Humanoid navigation must account for:
+
+- **Zero Moment Point (ZMP)**: Center of pressure where net moment is zero
+- **Capture Point**: Point where robot must step to come to rest
+- **Support Polygon**: Convex hull of contact points
+- **Center of Mass (CoM)**: Must remain within support polygon
+- **Dynamic Balance**: During walking transitions
+
+### Nav2 Architecture for Humanoids
+
+Adapting Nav2 for humanoid robots involves:
+
+- **Custom Costmaps**: Accounting for humanoid dimensions and stability
+- **Specialized Planners**: Generating footstep-aware paths
+- **Adapted Controllers**: Executing discrete footsteps
+- **Custom Behavior Trees**: Handling humanoid-specific recovery
+- **Integration Layers**: Connecting Nav2 with humanoid controllers
+
+## Code Examples
+
+### Humanoid Path Planner Plugin
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+from nav2_core.global_planner import GlobalPlanner
+from nav2_core.types import Costmap, Pose, Path
+from geometry_msgs.msg import Point, PoseStamped
+from nav_msgs.msg import Path as PathMsg
+from builtin_interfaces.msg import Duration
+import rclpy
+from rclpy.node import Node
+from rclpy.time import Time
+from rclpy.duration import Duration as RclDuration
+from rclpy.qos import QoSProfile
+import math
+
+
+class HumanoidPathPlanner(GlobalPlanner):
+    """
+    Custom path planner for humanoid robots that generates footstep-aware paths.
+    """
+
+    def __init__(self, name, costmap_ros):
+        super().__init__(name, costmap_ros)
+        self.name = name
+        self.costmap_ros = costmap_ros
+        self.logger = rclpy.logging.get_logger(name)
+
+        # Humanoid-specific parameters
+        self.step_length = 0.3  # Maximum step length (m)
+        self.step_width = 0.2   # Lateral step capability (m)
+        self.max_turn_angle = math.pi / 4  # Maximum turn per step (rad)
+        self.foot_separation = 0.3  # Distance between feet when standing (m)
+
+        # Initialize costmap
+        self.costmap = self.costmap_ros.get_costmap()
+        self.logger.info(f"{self.name} planner initialized")
+
+    def create_plan(self, start, goal):
+        """
+        Create a path from start to goal considering humanoid constraints.
+        """
+        self.logger.info(f"Creating plan from ({start.pose.position.x}, {start.pose.position.y}) "
+                         f"to ({goal.pose.position.x}, {goal.pose.position.y})")
+
+        # Convert ROS poses to internal format
+        start_pos = (start.pose.position.x, start.pose.position.y)
+        goal_pos = (goal.pose.position.x, goal.pose.position.y)
+
+        # Check if start and goal are valid
+        if not self.is_valid_position(start_pos) or not self.is_valid_position(goal_pos):
+            self.logger.error("Start or goal position is invalid")
+            return self.create_empty_path(start)
+
+        # Plan path using A* with humanoid constraints
+        path_points = self.plan_humanoid_path(start_pos, goal_pos)
+
+        if not path_points:
+            self.logger.error("No valid path found")
+            return self.create_empty_path(start)
+
+        # Convert to ROS Path message
+        path_msg = self.create_path_message(start, path_points)
+        return path_msg
+
+    def plan_humanoid_path(self, start_pos, goal_pos):
+        """
+        Plan a path considering humanoid walking constraints.
+        """
+        # Use A* algorithm with humanoid-specific cost function
+        open_set = [(start_pos, 0.0)]  # (position, cost)
+        came_from = {}
+        g_score = {start_pos: 0.0}
+        f_score = {start_pos: self.heuristic(start_pos, goal_pos)}
+
+        while open_set:
+            # Get node with lowest f_score
+            current_pos, _ = min(open_set, key=lambda x: f_score.get(x[0], float('inf')))
+            open_set.remove((current_pos, g_score[current_pos]))
+
+            # Check if we reached the goal
+            if self.distance(current_pos, goal_pos) < 0.5:  # 50cm tolerance
+                return self.reconstruct_path(came_from, current_pos)
+
+            # Generate possible footsteps from current position
+            neighbors = self.get_valid_footsteps(current_pos, goal_pos)
+
+            for neighbor in neighbors:
+                tentative_g_score = g_score[current_pos] + self.step_cost(current_pos, neighbor)
+
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current_pos
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.heuristic(neighbor, goal_pos)
+
+                    if neighbor not in [item[0] for item in open_set]:
+                        open_set.append((neighbor, g_score[neighbor]))
+
+        return []  # No path found
+
+    def get_valid_footsteps(self, current_pos, goal_pos):
+        """
+        Generate valid footsteps from current position.
+        """
+        footsteps = []
+        x, y = current_pos
+
+        # Generate potential footsteps in different directions
+        step_angles = [0, math.pi/4, math.pi/2, 3*math.pi/4, math.pi,
+                       -3*math.pi/4, -math.pi/2, -math.pi/4]
+
+        for angle in step_angles:
+            # Try different step lengths
+            for step_len in [0.1, 0.2, 0.3]:  # Different step lengths
+                new_x = x + step_len * math.cos(angle)
+                new_y = y + step_len * math.sin(angle)
+                new_pos = (new_x, new_y)
+
+                if self.is_valid_position(new_pos):
+                    # Check if the step is within humanoid capabilities
+                    if self.is_valid_step(current_pos, new_pos, goal_pos):
+                        footsteps.append(new_pos)
+
+        return footsteps
+
+    def is_valid_step(self, from_pos, to_pos, goal_pos):
+        """
+        Check if a step is valid considering humanoid constraints.
+        """
+        # Check distance constraint
+        step_distance = self.distance(from_pos, to_pos)
+        if step_distance > self.step_length:
+            return False
+
+        # Check cost at target position
+        cost = self.get_cost_at_position(to_pos)
+        if cost >= 253:  # lethal obstacle
+            return False
+
+        # Check if the step is reasonable toward the goal
+        from_to_goal = self.distance(from_pos, goal_pos)
+        to_goal = self.distance(to_pos, goal_pos)
+
+        # Allow some deviation but prefer steps that reduce distance to goal
+        if to_goal > from_to_goal * 1.5 and step_distance < 0.1:
+            return False  # Don't take small steps away from goal
+
+        return True
+
+    def is_valid_position(self, pos):
+        """
+        Check if a position is valid (within bounds and not in obstacle).
+        """
+        x, y = pos
+
+        # Check bounds
+        if (x < 0 or x >= self.costmap.get_size_x_cells() * self.costmap.get_resolution() or
+            y < 0 or y >= self.costmap.get_size_y_cells() * self.costmap.get_resolution()):
+            return False
+
+        # Convert to map coordinates
+        map_x = int(x / self.costmap.get_resolution())
+        map_y = int(y / self.costmap.get_resolution())
+
+        # Check if within map bounds
+        if (map_x < 0 or map_x >= self.costmap.get_size_x_cells() or
+            map_y < 0 or map_y >= self.costmap.get_size_y_cells()):
+            return False
+
+        # Get cost at position
+        cost = self.costmap.get_cost(map_x, map_y)
+        return cost < 253  # Not a lethal obstacle
+
+    def get_cost_at_position(self, pos):
+        """
+        Get the cost at a specific position.
+        """
+        x, y = pos
+        map_x = int(x / self.costmap.get_resolution())
+        map_y = int(y / self.costmap.get_resolution())
+
+        if (map_x < 0 or map_x >= self.costmap.get_size_x_cells() or
+            map_y < 0 or map_y >= self.costmap.get_size_y_cells()):
+            return 254  # Outside map
+
+        return self.costmap.get_cost(map_x, map_y)
+
+    def step_cost(self, from_pos, to_pos):
+        """
+        Calculate cost of a step considering terrain and obstacles.
+        """
+        distance_cost = self.distance(from_pos, to_pos)
+        terrain_cost = self.get_cost_at_position(to_pos) / 254.0
+        return distance_cost + terrain_cost
+
+    def heuristic(self, pos1, pos2):
+        """
+        Heuristic function for A* (Euclidean distance).
+        """
+        return self.distance(pos1, pos2)
+
+    def distance(self, pos1, pos2):
+        """
+        Calculate Euclidean distance between two positions.
+        """
+        dx = pos1[0] - pos2[0]
+        dy = pos1[1] - pos2[1]
+        return math.sqrt(dx*dx + dy*dy)
+
+    def reconstruct_path(self, came_from, current):
+        """
+        Reconstruct path from came_from dictionary.
+        """
+        path = [current]
+        while current in came_from:
+            current = came_from[current]
+            path.append(current)
+        path.reverse()
+        return path
+
+    def create_path_message(self, start_pose, path_points):
+        """
+        Create a ROS Path message from path points.
+        """
+        path_msg = PathMsg()
+        path_msg.header.frame_id = "map"
+        path_msg.header.stamp = Time().to_msg()
+
+        # Add start pose
+        start_ps = PoseStamped()
+        start_ps.header.frame_id = "map"
+        start_ps.header.stamp = Time().to_msg()
+        start_ps.pose = start_pose.pose
+        path_msg.poses.append(start_ps)
+
+        # Add path points
+        for point in path_points:
+            pose_stamped = PoseStamped()
+            pose_stamped.header.frame_id = "map"
+            pose_stamped.header.stamp = Time().to_msg()
+            pose_stamped.pose.position.x = point[0]
+            pose_stamped.pose.position.y = point[1]
+            pose_stamped.pose.position.z = 0.0
+
+            # Set orientation towards next point
+            if len(path_points) > 1:
+                next_idx = min(path_points.index(point) + 1, len(path_points) - 1)
+                next_point = path_points[next_idx]
+                if next_point != point:
+                    angle = math.atan2(next_point[1] - point[1], next_point[0] - point[0])
+                    # Convert angle to quaternion
+                    from tf_transformations import quaternion_from_euler
+                    quat = quaternion_from_euler(0, 0, angle)
+                    pose_stamped.pose.orientation.x = quat[0]
+                    pose_stamped.pose.orientation.y = quat[1]
+                    pose_stamped.pose.orientation.z = quat[2]
+                    pose_stamped.pose.orientation.w = quat[3]
+
+            path_msg.poses.append(pose_stamped)
+
+        return path_msg
+
+    def create_empty_path(self, start_pose):
+        """
+        Create an empty path message.
+        """
+        path_msg = PathMsg()
+        path_msg.header.frame_id = "map"
+        path_msg.header.stamp = Time().to_msg()
+
+        start_ps = PoseStamped()
+        start_ps.header.frame_id = "map"
+        start_ps.header.stamp = Time().to_msg()
+        start_ps.pose = start_pose.pose
+        path_msg.poses.append(start_ps)
+
+        return path_msg
+
+    def activate(self):
+        """
+        Activate the planner.
+        """
+        self.logger.info(f"{self.name} planner activated")
+
+    def deactivate(self):
+        """
+        Deactivate the planner.
+        """
+        self.logger.info(f"{self.name} planner deactivated")
+
+    def cleanup(self):
+        """
+        Cleanup the planner.
+        """
+        self.logger.info(f"{self.name} planner cleaned up")
+```
+
+### Footstep Planner for Humanoid Robots
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import math
+from geometry_msgs.msg import Pose, Point
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import ColorRGBA
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
+
+
+class FootstepPlanner(Node):
+    """
+    Footstep planner for humanoid robots that generates stable footstep sequences.
+    """
+
+    def __init__(self):
+        super().__init__('footstep_planner')
+
+        # Publishers
+        self.footstep_pub = self.create_publisher(MarkerArray, '/footsteps', 10)
+        self.footprint_pub = self.create_publisher(Marker, '/robot_footprint', 10)
+
+        # Parameters
+        self.step_length = 0.3  # Forward step length
+        self.step_width = 0.18  # Lateral step width
+        self.step_height = 0.05 # Step height for swing foot
+        self.max_turn = math.pi / 4  # Maximum turn per step
+        self.foot_size_x = 0.15  # Foot size in x direction
+        self.foot_size_y = 0.10  # Foot size in y direction
+
+        # Robot state
+        self.left_foot_pos = np.array([0.0, self.step_width/2, 0.0])  # Start with left foot
+        self.right_foot_pos = np.array([0.0, -self.step_width/2, 0.0])  # Right foot
+        self.support_foot = 'left'  # Which foot is currently supporting
+        self.robot_pos = np.array([0.0, 0.0, 0.0])  # Robot center position
+        self.robot_yaw = 0.0  # Robot orientation
+
+        # Footstep sequence
+        self.footstep_sequence = []
+        self.current_step_index = 0
+
+        # Timers
+        self.plan_timer = self.create_timer(1.0, self.plan_footsteps)
+
+        self.get_logger().info('Footstep Planner initialized')
+
+    def plan_footsteps(self):
+        """
+        Plan a sequence of footsteps to reach a target.
+        """
+        # Example: Plan footsteps to move forward
+        target_pos = np.array([2.0, 0.0, 0.0])  # Move 2m forward
+        target_yaw = 0.0  # No turn
+
+        # Calculate number of steps needed
+        distance = np.linalg.norm(target_pos[:2] - self.robot_pos[:2])
+        num_steps = int(distance / self.step_length) + 1
+
+        # Generate footstep sequence
+        self.footstep_sequence = self.generate_footsteps(
+            self.robot_pos, target_pos, num_steps
+        )
+
+        # Visualize footsteps
+        self.visualize_footsteps()
+
+    def generate_footsteps(self, start_pos, target_pos, num_steps):
+        """
+        Generate a sequence of footsteps from start to target.
+        """
+        footsteps = []
+
+        # Calculate direction vector
+        direction = target_pos - start_pos
+        direction[2] = 0  # No vertical movement in footsteps
+        direction = direction / np.linalg.norm(direction)  # Normalize
+
+        # Generate alternating footsteps
+        for i in range(num_steps):
+            step_distance = self.step_length * (i + 1)
+            step_pos = start_pos + direction * step_distance
+
+            # Alternate between left and right feet
+            if i % 2 == 0:
+                # Left foot step
+                foot_offset = np.array([0, self.step_width/2, 0])
+                foot_pos = step_pos + foot_offset
+                footstep = {
+                    'position': foot_pos,
+                    'orientation': 0.0,  # Yaw angle
+                    'foot': 'left',
+                    'step_num': i
+                }
+            else:
+                # Right foot step
+                foot_offset = np.array([0, -self.step_width/2, 0])
+                foot_pos = step_pos + foot_offset
+                footstep = {
+                    'position': foot_pos,
+                    'orientation': 0.0,
+                    'foot': 'right',
+                    'step_num': i
+                }
+
+            footsteps.append(footstep)
+
+        return footsteps
+
+    def generate_turning_footsteps(self, start_yaw, target_yaw, num_steps):
+        """
+        Generate footsteps for turning motion.
+        """
+        footsteps = []
+
+        # Calculate turn angle
+        turn_angle = target_yaw - start_yaw
+        angle_per_step = turn_angle / num_steps
+
+        for i in range(num_steps):
+            current_yaw = start_yaw + angle_per_step * (i + 1)
+
+            # Calculate foot position based on turn
+            if i % 2 == 0:
+                # Left foot - offset to the left relative to heading
+                lateral_offset = self.step_width / 2
+                foot_pos = self.robot_pos.copy()
+                foot_pos[0] += lateral_offset * math.sin(current_yaw)
+                foot_pos[1] += lateral_offset * math.cos(current_yaw)
+
+                footstep = {
+                    'position': foot_pos,
+                    'orientation': current_yaw,
+                    'foot': 'left',
+                    'step_num': i
+                }
+            else:
+                # Right foot - offset to the right relative to heading
+                lateral_offset = -self.step_width / 2
+                foot_pos = self.robot_pos.copy()
+                foot_pos[0] += lateral_offset * math.sin(current_yaw)
+                foot_pos[1] += lateral_offset * math.cos(current_yaw)
+
+                footstep = {
+                    'position': foot_pos,
+                    'orientation': current_yaw,
+                    'foot': 'right',
+                    'step_num': i
+                }
+
+            footsteps.append(footstep)
+
+        return footsteps
+
+    def check_footstep_stability(self, foot_pos):
+        """
+        Check if a footstep position is stable.
+        """
+        # This is a simplified stability check
+        # In practice, you would check for obstacles, surface properties, etc.
+
+        # Check if position is not in an obstacle
+        # (In a real implementation, you'd check against costmap)
+        is_clear = True  # Simplified
+
+        # Check if position is reachable
+        # (In a real implementation, you'd check kinematic constraints)
+        is_reachable = True  # Simplified
+
+        return is_clear and is_reachable
+
+    def visualize_footsteps(self):
+        """
+        Publish visualization markers for footsteps.
+        """
+        marker_array = MarkerArray()
+
+        for i, footstep in enumerate(self.footstep_sequence):
+            marker = Marker()
+            marker.header.frame_id = "map"
+            marker.header.stamp = self.get_clock().now().to_msg()
+            marker.ns = "footsteps"
+            marker.id = i
+            marker.type = Marker.CUBE
+            marker.action = Marker.ADD
+
+            # Set position
+            marker.pose.position.x = footstep['position'][0]
+            marker.pose.position.y = footstep['position'][1]
+            marker.pose.position.z = footstep['position'][2] + 0.01  # Slightly above ground
+
+            # Set orientation
+            marker.pose.orientation.w = 1.0  # No rotation for now
+
+            # Set size (foot dimensions)
+            marker.scale.x = self.foot_size_x
+            marker.scale.y = self.foot_size_y
+            marker.scale.z = 0.02  # Thin cube to represent foot
+
+            # Set color based on foot
+            if footstep['foot'] == 'left':
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = 0.0
+            else:
+                marker.color.r = 0.0
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+            marker.color.a = 0.8
+
+            marker_array.markers.append(marker)
+
+        self.footstep_pub.publish(marker_array)
+
+    def update_robot_pose(self, position, yaw):
+        """
+        Update the robot's current position and orientation.
+        """
+        self.robot_pos = np.array(position)
+        self.robot_yaw = yaw
+
+    def execute_next_step(self):
+        """
+        Execute the next footstep in the sequence.
+        """
+        if self.current_step_index >= len(self.footstep_sequence):
+            self.get_logger().info('Completed all footsteps')
+            return False
+
+        next_footstep = self.footstep_sequence[self.current_step_index]
+
+        self.get_logger().info(
+            f'Executing step {self.current_step_index}: '
+            f'{next_footstep["foot"]} foot to '
+            f'({next_footstep["position"][0]:.2f}, {next_footstep["position"][1]:.2f})'
+        )
+
+        # Update support foot
+        self.support_foot = 'right' if self.support_foot == 'left' else 'left'
+
+        # Update robot position estimate
+        self.robot_pos = next_footstep['position'].copy()
+
+        self.current_step_index += 1
+        return True
+
+    def reset_planner(self):
+        """
+        Reset the footstep planner.
+        """
+        self.footstep_sequence = []
+        self.current_step_index = 0
+        self.support_foot = 'left'
+        self.robot_pos = np.array([0.0, 0.0, 0.0])
+        self.robot_yaw = 0.0
+        self.left_foot_pos = np.array([0.0, self.step_width/2, 0.0])
+        self.right_foot_pos = np.array([0.0, -self.step_width/2, 0.0])
+
+
+def main(args=None):
+    """
+    Main function to run the footstep planner.
+    """
+    rclpy.init(args=args)
+
+    planner = FootstepPlanner()
+
+    try:
+        rclpy.spin(planner)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        planner.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Humanoid Navigation Controller with Balance Awareness
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import math
+from geometry_msgs.msg import Twist, PoseStamped, PointStamped
+from nav_msgs.msg import Path, Odometry
+from sensor_msgs.msg import LaserScan, Imu
+from visualization_msgs.msg import Marker
+from tf2_ros import TransformListener, Buffer
+import tf2_ros
+import tf_transformations
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
+from builtin_interfaces.msg import Duration
+from std_msgs.msg import ColorRGBA
+
+
+class BalanceAwareController(Node):
+    """
+    Navigation controller with balance awareness for humanoid robots.
+    """
+
+    def __init__(self):
+        super().__init__('balance_aware_controller')
+
+        # Publishers
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.balance_marker_pub = self.create_publisher(Marker, '/balance_marker', 10)
+        self.com_marker_pub = self.create_publisher(Marker, '/center_of_mass', 10)
+
+        # Subscribers
+        self.odom_sub = self.create_subscription(
+            Odometry, '/visual_odom', self.odom_callback, 10)
+        self.imu_sub = self.create_subscription(
+            Imu, '/imu/data', self.imu_callback, 10)
+        self.path_sub = self.create_subscription(
+            Path, '/plan', self.path_callback, 10)
+        self.scan_sub = self.create_subscription(
+            LaserScan, '/scan', self.scan_callback, 10)
+
+        # TF
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
+        # Internal state
+        self.current_pose = None
+        self.current_twist = None
+        self.current_imu = None
+        self.current_scan = None
+        self.navigation_path = []
+        self.current_waypoint_idx = 0
+        self.navigation_active = False
+
+        # Humanoid-specific parameters
+        self.leg_length = 0.5  # Length of leg (m)
+        self.foot_separation = 0.3  # Distance between feet (m)
+        self.com_height = 0.8   # Height of center of mass (m)
+        self.max_step_length = 0.3  # Max step length (m)
+        self.max_angular_velocity = 0.5  # rad/s
+        self.balance_threshold = 0.1  # Max CoM deviation from support polygon (m)
+
+        # Balance state
+        self.center_of_mass = np.array([0.0, 0.0, self.com_height])
+        self.support_polygon_center = np.array([0.0, 0.0, 0.0])
+        self.balance_margin = 0.0  # Current balance margin
+
+        # Walking parameters
+        self.walk_phase = 0.0  # 0.0 to 1.0
+        self.walk_frequency = 1.0  # Hz
+        self.step_duration = 1.0 / (2 * self.walk_frequency)  # Duration of single support phase
+
+        # Control parameters
+        self.linear_vel = 0.0
+        self.angular_vel = 0.0
+        self.max_linear_vel = 0.2  # Slower for stability
+        self.linear_tolerance = 0.2
+        self.angular_tolerance = 0.1
+
+        # Timers
+        self.control_timer = self.create_timer(0.05, self.control_loop)  # 20Hz control
+        self.balance_timer = self.create_timer(0.1, self.balance_check)  # 10Hz balance check
+
+        self.get_logger().info('Balance Aware Controller initialized')
+
+    def odom_callback(self, msg):
+        """Handle odometry updates."""
+        self.current_pose = msg.pose.pose
+        self.current_twist = msg.twist.twist
+
+        # Update center of mass based on robot pose
+        if self.current_pose:
+            self.center_of_mass[0] = self.current_pose.position.x
+            self.center_of_mass[1] = self.current_pose.position.y
+
+    def imu_callback(self, msg):
+        """Handle IMU updates."""
+        self.current_imu = msg
+
+        # Update center of mass based on IMU data
+        if self.current_imu:
+            # In a real implementation, you would integrate IMU data
+            # to estimate CoM position more accurately
+            pass
+
+    def path_callback(self, msg):
+        """Handle navigation path updates."""
+        self.navigation_path = msg.poses
+        self.current_waypoint_idx = 0
+        self.navigation_active = len(self.navigation_path) > 0
+        self.get_logger().info(f'New path received with {len(self.navigation_path)} waypoints')
+
+    def scan_callback(self, msg):
+        """Handle laser scan updates."""
+        self.current_scan = msg
+
+    def control_loop(self):
+        """Main navigation control loop with balance awareness."""
+        if not self.navigation_active or not self.current_pose:
+            self.stop_robot()
+            return
+
+        if self.current_waypoint_idx >= len(self.navigation_path):
+            # Reached the end of the path
+            self.stop_robot()
+            return
+
+        # Check balance before proceeding
+        if not self.is_balanced():
+            self.get_logger().warn('Robot is out of balance, stopping')
+            self.stop_robot()
+            return
+
+        # Get current target waypoint
+        target_pose = self.navigation_path[self.current_waypoint_idx].pose
+
+        # Calculate distance to target
+        dx = target_pose.position.x - self.current_pose.position.x
+        dy = target_pose.position.y - self.current_pose.position.y
+        distance_to_target = math.sqrt(dx*dx + dy*dy)
+
+        # Check if we've reached the current waypoint
+        if distance_to_target < self.linear_tolerance:
+            self.current_waypoint_idx += 1
+            if self.current_waypoint_idx >= len(self.navigation_path):
+                self.stop_robot()
+                return
+            # Get the next target
+            target_pose = self.navigation_path[self.current_waypoint_idx].pose
+            dx = target_pose.position.x - self.current_pose.position.x
+            dy = target_pose.position.y - self.current_pose.position.y
+            distance_to_target = math.sqrt(dx*dx + dy*dy)
+
+        # Calculate desired heading
+        desired_heading = math.atan2(dy, dx)
+
+        # Get current heading from orientation
+        current_quat = [
+            self.current_pose.orientation.x,
+            self.current_pose.orientation.y,
+            self.current_pose.orientation.z,
+            self.current_pose.orientation.w
+        ]
+        current_euler = tf_transformations.euler_from_quaternion(current_quat)
+        current_heading = current_euler[2]
+
+        # Calculate heading error
+        heading_error = desired_heading - current_heading
+        # Normalize to [-pi, pi]
+        while heading_error > math.pi:
+            heading_error -= 2 * math.pi
+        while heading_error < -math.pi:
+            heading_error += 2 * math.pi
+
+        # Check for obstacles
+        safe_to_proceed = self.check_path_clear()
+
+        if not safe_to_proceed:
+            # Stop if path is blocked
+            self.stop_robot()
+            self.get_logger().warn('Path blocked by obstacle, stopping')
+            return
+
+        # Generate velocity commands with balance consideration
+        cmd_vel = self.calculate_balanced_velocity(target_pose, heading_error, distance_to_target)
+
+        # Apply balance constraints
+        cmd_vel = self.apply_balance_constraints(cmd_vel)
+
+        # Publish command
+        self.cmd_vel_pub.publish(cmd_vel)
+
+        # Update walking phase
+        self.walk_phase += 0.05 * self.walk_frequency * 2  # 2 steps per cycle
+        if self.walk_phase > 2.0:
+            self.walk_phase -= 2.0
+
+        # Publish visualization
+        self.publish_balance_visualization()
+
+    def calculate_balanced_velocity(self, target_pose, heading_error, distance_to_target):
+        """Calculate velocity commands considering balance."""
+        cmd_vel = Twist()
+
+        # Adjust linear velocity based on heading error and balance margin
+        base_linear_vel = min(distance_to_target * 0.5, self.max_linear_vel)
+
+        # Reduce speed if balance margin is low
+        balance_factor = max(0.1, self.balance_margin / self.balance_threshold)
+        cmd_vel.linear.x = base_linear_vel * balance_factor
+
+        # Angular velocity based on heading error
+        cmd_vel.angular.z = max(min(heading_error * 1.0, self.max_angular_velocity),
+                                -self.max_angular_velocity)
+
+        # If heading error is large, reduce linear velocity
+        if abs(heading_error) > 0.5:
+            cmd_vel.linear.x *= 0.5
+
+        return cmd_vel
+
+    def apply_balance_constraints(self, cmd_vel):
+        """Apply balance-based constraints to velocity commands."""
+        # If balance margin is too low, reduce velocities
+        if self.balance_margin < self.balance_threshold * 0.5:
+            cmd_vel.linear.x *= 0.3  # Significantly reduce speed
+            cmd_vel.angular.z *= 0.5
+        elif self.balance_margin < self.balance_threshold * 0.8:
+            cmd_vel.linear.x *= 0.6  # Moderately reduce speed
+            cmd_vel.angular.z *= 0.8
+
+        # Limit angular velocity when moving forward
+        if cmd_vel.linear.x > 0.1 and abs(cmd_vel.angular.z) > 0.3:
+            cmd_vel.angular.z = max(min(cmd_vel.angular.z, 0.3), -0.3)
+
+        return cmd_vel
+
+    def check_path_clear(self):
+        """Check if the path ahead is clear of obstacles."""
+        if not self.current_scan or not self.current_pose:
+            return True  # Assume clear if no scan data
+
+        # Check if any obstacles are within the path corridor
+        min_distance = float('inf')
+        for i, range_val in enumerate(self.current_scan.ranges):
+            if not (math.isnan(range_val) or range_val > self.current_scan.range_max):
+                if range_val < min_distance:
+                    min_distance = range_val
+
+        # If minimum distance is too close, path is blocked
+        return min_distance > 0.5  # 50cm clearance threshold
+
+    def is_balanced(self):
+        """Check if the robot is currently balanced."""
+        # This is a simplified balance check
+        # In practice, you'd check ZMP, CoM position relative to support polygon, etc.
+
+        # For now, just check the balance margin
+        return self.balance_margin > 0.0
+
+    def balance_check(self):
+        """Perform balance check and update balance margin."""
+        if not self.current_pose:
+            return
+
+        # Calculate support polygon center (simplified as between feet)
+        # In a real implementation, this would consider actual foot positions
+        support_center_x = self.current_pose.position.x
+        support_center_y = self.current_pose.position.y
+
+        # Calculate CoM position relative to support center
+        com_offset_x = self.center_of_mass[0] - support_center_x
+        com_offset_y = self.center_of_mass[1] - support_center_y
+        com_offset_magnitude = math.sqrt(com_offset_x**2 + com_offset_y**2)
+
+        # Update balance margin (positive = good, negative = unstable)
+        self.balance_margin = self.balance_threshold - com_offset_magnitude
+
+        # Log balance status
+        if self.balance_margin < 0:
+            self.get_logger().warn(f'Balance exceeded: margin = {self.balance_margin:.3f}m')
+        elif self.balance_margin < self.balance_threshold * 0.3:
+            self.get_logger().info(f'Balance warning: margin = {self.balance_margin:.3f}m')
+
+    def stop_robot(self):
+        """Stop the robot safely."""
+        cmd_vel = Twist()
+        cmd_vel.linear.x = 0.0
+        cmd_vel.linear.y = 0.0
+        cmd_vel.linear.z = 0.0
+        cmd_vel.angular.x = 0.0
+        cmd_vel.angular.y = 0.0
+        cmd_vel.angular.z = 0.0
+
+        self.cmd_vel_pub.publish(cmd_vel)
+        self.navigation_active = False
+        self.get_logger().info('Robot stopped')
+
+    def publish_balance_visualization(self):
+        """Publish visualization markers for balance state."""
+        # Publish center of mass marker
+        com_marker = Marker()
+        com_marker.header.frame_id = "map"
+        com_marker.header.stamp = self.get_clock().now().to_msg()
+        com_marker.ns = "balance"
+        com_marker.id = 0
+        com_marker.type = Marker.SPHERE
+        com_marker.action = Marker.ADD
+        com_marker.pose.position.x = self.center_of_mass[0]
+        com_marker.pose.position.y = self.center_of_mass[1]
+        com_marker.pose.position.z = self.center_of_mass[2]
+        com_marker.pose.orientation.w = 1.0
+        com_marker.scale.x = 0.1
+        com_marker.scale.y = 0.1
+        com_marker.scale.z = 0.1
+        com_marker.color.a = 1.0
+        com_marker.color.r = 1.0 if self.balance_margin > 0 else 1.0  # Red if unbalanced
+        com_marker.color.g = 1.0 if self.balance_margin > 0 else 0.0
+        com_marker.color.b = 0.0
+        self.com_marker_pub.publish(com_marker)
+
+        # Publish balance margin marker
+        margin_marker = Marker()
+        margin_marker.header.frame_id = "map"
+        margin_marker.header.stamp = self.get_clock().now().to_msg()
+        margin_marker.ns = "balance"
+        margin_marker.id = 1
+        margin_marker.type = Marker.CYLINDER
+        margin_marker.action = Marker.ADD
+        margin_marker.pose.position.x = self.center_of_mass[0]
+        margin_marker.pose.position.y = self.center_of_mass[1]
+        margin_marker.pose.position.z = self.center_of_mass[2] - 0.5
+        margin_marker.pose.orientation.w = 1.0
+        margin_marker.scale.x = self.balance_threshold * 2
+        margin_marker.scale.y = self.balance_threshold * 2
+        margin_marker.scale.z = 0.01
+        margin_marker.color.a = 0.3
+        margin_marker.color.r = 0.0
+        margin_marker.color.g = 1.0 if self.balance_margin > 0 else 0.5
+        margin_marker.color.b = 0.0 if self.balance_margin > 0 else 1.0
+        self.balance_marker_pub.publish(margin_marker)
+
+    def set_navigation_goal(self, x, y, theta=0.0):
+        """Set a navigation goal."""
+        # This would typically send a goal to the navigation action server
+        self.get_logger().info(f'Setting navigation goal to ({x}, {y})')
+
+
+def main(args=None):
+    """Main function to run the balance aware controller."""
+    rclpy.init(args=args)
+
+    controller = BalanceAwareController()
+
+    try:
+        rclpy.spin(controller)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![Humanoid Navigation Architecture](/img/diagrams/humanoid-nav2-architecture.png)
+
+*Figure 1: Architecture of Nav2 adapted for humanoid navigation, showing the integration of footstep planning, balance awareness, and traditional path planning components.*
+
+## Hands-On Lab
+
+### Exercise 1: Footstep Planning Implementation
+Implement a complete footstep planner:
+
+1. Create a footstep planner that generates stable step sequences
+2. Implement stability checks for each potential footstep
+3. Test the planner in a simulated environment
+4. Visualize the planned footsteps using RViz markers
+5. Evaluate the stability of planned footstep sequences
+
+### Exercise 2: Balance-Aware Navigation
+Implement balance-aware navigation:
+
+1. Integrate balance checking into the navigation controller
+2. Implement CoM tracking and ZMP calculation
+3. Adjust navigation parameters based on balance state
+4. Test navigation with balance constraints
+5. Evaluate the trade-off between speed and stability
+
+### Exercise 3: Terrain Assessment
+Implement terrain assessment for humanoid navigation:
+
+1. Create a costmap layer that evaluates terrain walkability
+2. Consider surface properties like friction and roughness
+3. Plan paths that avoid unstable terrain
+4. Test navigation on various terrain types
+5. Evaluate path safety and efficiency
+
+## Troubleshooting
+
+Common humanoid navigation issues and solutions:
+
+- **Issue: Unstable walking during navigation**: Reduce velocity commands, improve balance control, or use more conservative footstep planning.
+- **Issue: Failure to find valid paths**: Adjust costmap parameters, increase robot radius, or modify the planner to consider stability constraints.
+- **Issue: High computational load**: Simplify planning algorithms, reduce planning frequency, or use sampling-based methods.
+- **Issue: Collisions during walking**: Improve obstacle detection, adjust inflation parameters, or implement better recovery behaviors.
+
+## Summary
+
+This chapter covered advanced techniques for adapting the Nav2 stack for humanoid robot navigation. We explored footstep planning algorithms, balance-aware control, and specialized path planning techniques that consider the unique constraints of bipedal locomotion. The implementation of these techniques enables humanoid robots to navigate complex environments while maintaining stability and balance.
+
+## Further Reading
+
+- Footstep Planning for Humanoid Robots
+- Balance Control in Humanoid Navigation
+- Dynamic Walking and Stability for Humanoid Robots
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a complete footstep planning pipeline that considers terrain properties.
+2. Develop a dynamic balance controller that adjusts gait parameters in real-time.
+3. Create a multi-layer costmap that evaluates both collision risk and stability.
+
+<!-- Optional: Add custom components for interactive elements -->

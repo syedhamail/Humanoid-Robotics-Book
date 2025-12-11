@@ -1,0 +1,1225 @@
+---
+title: "Voice Commands with Whisper (Speech-to-Action)"
+description: Implementing speech recognition and voice command processing for humanoid robots using OpenAI Whisper
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the principles of speech recognition for robotics applications
+- Implement OpenAI Whisper for real-time voice command recognition
+- Design voice command grammars and parsing strategies
+- Integrate speech recognition with ROS 2 action servers
+- Create robust voice command processing pipelines
+- Handle noise and ambiguity in voice commands
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1-4, especially Chapter 1 on VLA architectures
+- Understand the basics of speech recognition and natural language processing
+- Be familiar with ROS 2 action servers and services
+- Have experience with Python audio processing libraries
+- Understand humanoid robot control and navigation
+- Be comfortable with threading and real-time processing concepts
+
+## Introduction
+
+Voice commands represent a natural and intuitive interface for human-robot interaction, allowing humans to communicate with humanoid robots using natural language. OpenAI Whisper provides state-of-the-art speech recognition capabilities that can be leveraged for robotics applications, enabling robots to understand and respond to spoken commands in real-time.
+
+For humanoid robots, voice command processing involves several key components:
+- **Audio Capture**: Recording speech from microphones or audio streams
+- **Speech Recognition**: Converting speech to text using Whisper
+- **Command Parsing**: Interpreting the recognized text for robotic actions
+- **Action Execution**: Executing appropriate robot behaviors based on commands
+- **Feedback Generation**: Providing confirmation or status updates to the user
+
+The integration of Whisper with robotics applications offers several advantages:
+- **High Accuracy**: Whisper provides good recognition accuracy in controlled conditions with clear audio input
+- **Multilingual Support**: Supports multiple languages for international applications
+- **Robustness**: Handles various audio conditions better than many traditional approaches, though performance degrades with significant background noise
+- **Real-time Capability**: Can operate with reasonable latency when using smaller models, though true real-time performance requires careful optimization
+
+## Core Concepts
+
+### Speech Recognition Fundamentals
+
+Speech recognition for robotics involves:
+- **Acoustic Modeling**: Understanding audio patterns corresponding to phonemes
+- **Language Modeling**: Understanding grammar and word sequences
+- **Decoding**: Finding the most likely word sequence given audio input
+- **Post-processing**: Cleaning and interpreting recognized text
+
+### Whisper Architecture
+
+OpenAI Whisper uses a Transformer-based architecture:
+- **Encoder**: Processes audio spectrograms to extract features
+- **Decoder**: Generates text tokens from encoded features
+- **Attention Mechanisms**: Aligning audio and text representations
+- **Multi-task Training**: Learning from multiple speech tasks simultaneously
+
+### Voice Command Processing Pipeline
+
+The voice command processing pipeline includes:
+- **Audio Preprocessing**: Noise reduction, normalization, and formatting
+- **Speech Recognition**: Converting audio to text using Whisper
+- **Intent Classification**: Identifying command categories from text
+- **Entity Extraction**: Identifying parameters and objects in commands
+- **Action Mapping**: Converting intents to robot actions
+- **Execution**: Performing the mapped robot actions
+
+### Real-time Considerations
+
+Real-time voice command processing requires:
+- **Low Latency**: Fast recognition and response times
+- **Continuous Processing**: Handling ongoing audio streams
+- **Interrupt Handling**: Managing overlapping speech and interruptions
+- **Resource Management**: Efficient use of computational resources
+
+## Code Examples
+
+### Whisper Voice Command Node
+
+```python
+#!/usr/bin/env python3
+
+"""
+Whisper Voice Command Processing Node
+This node processes voice commands using OpenAI Whisper and converts them to robot actions.
+"""
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from std_msgs.msg import String, Bool
+from geometry_msgs.msg import Twist, PoseStamped
+from sensor_msgs.msg import AudioData
+from action_msgs.msg import GoalStatus
+
+import torch
+import whisper
+import pyaudio
+import numpy as np
+import threading
+import queue
+import time
+import re
+from typing import Dict, List, Tuple, Optional
+import json
+
+
+class WhisperVoiceProcessor(Node):
+    """
+    Node for processing voice commands using OpenAI Whisper.
+    """
+
+    def __init__(self):
+        super().__init__('whisper_voice_processor')
+
+        # Initialize Whisper model
+        self.get_logger().info('Loading Whisper model...')
+        try:
+            # Load Whisper model (use smaller model for real-time performance)
+            self.whisper_model = whisper.load_model("base.en")
+            self.get_logger().info('Whisper model loaded successfully')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load Whisper model: {e}')
+            self.whisper_model = None
+            return
+
+        # Audio recording parameters
+        self.audio_format = pyaudio.paInt16
+        self.channels = 1
+        self.rate = 16000  # Whisper expects 16kHz
+        self.chunk = 1024
+        self.record_seconds = 3  # Shorter for responsiveness
+
+        # Initialize PyAudio
+        self.audio = pyaudio.PyAudio()
+
+        # Publishers
+        self.voice_command_pub = self.create_publisher(String, '/voice_commands', 10)
+        self.status_pub = self.create_publisher(String, '/voice_status', 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        # Subscribers
+        self.enable_sub = self.create_subscription(
+            Bool, '/voice_recognition_enable', self.enable_callback, 10)
+
+        # Internal state
+        self.recording_enabled = True
+        self.recording_thread = None
+        self.audio_queue = queue.Queue()
+        self.processing_lock = threading.Lock()
+
+        # Command vocabulary and mappings
+        self.command_vocab = {
+            # Movement commands
+            'forward', 'backward', 'ahead', 'back', 'go', 'move', 'walk',
+            'turn', 'left', 'right', 'spin', 'rotate', 'stop', 'halt', 'pause',
+            # Navigation commands
+            'navigate', 'go to', 'move to', 'come here', 'follow me', 'home',
+            # Object interaction
+            'pick up', 'grasp', 'take', 'bring', 'drop', 'place', 'put',
+            # General commands
+            'hello', 'hi', 'yes', 'no', 'okay', 'thanks', 'please'
+        }
+
+        # Command patterns and actions
+        self.command_patterns = {
+            # Movement patterns
+            r'(?:go|move|walk)/s+(?:forward|ahead)': self.move_forward,
+            r'(?:go|move|walk)/s+(?:backward|back)': self.move_backward,
+            r'(?:turn|spin|rotate)/s+left': self.turn_left,
+            r'(?:turn|spin|rotate)/s+right': self.turn_right,
+            r'(?:stop|halt|pause)': self.stop_robot,
+            # Location patterns
+            r'go/s+to/s+(.+)': self.go_to_location,
+            r'come/s+here': self.go_to_robot,
+            r'follow/s+me': self.follow_mode,
+            r'go/s+home': self.return_home,
+            # Object interaction
+            r'(?:pick|take|grasp)/s+(?:up/s+)?(.+)': self.grasp_object,
+            r'(?:drop|place|put)/s+(?:down/s+)?(.+)': self.place_object,
+        }
+
+        # Initialize audio recording
+        self.start_audio_recording()
+
+        # Timer for processing audio queue
+        self.process_timer = self.create_timer(0.1, self.process_audio_queue)
+
+        self.get_logger().info('Whisper Voice Processor initialized')
+
+    def enable_callback(self, msg: Bool):
+        """
+        Callback to enable/disable voice recognition.
+        """
+        self.recording_enabled = msg.data
+        state = "enabled" if self.recording_enabled else "disabled"
+        self.get_logger().info(f'Voice recognition {state}')
+        self.publish_status(f'Voice recognition {state}')
+
+    def start_audio_recording(self):
+        """
+        Start audio recording thread.
+        """
+        self.recording_thread = threading.Thread(target=self.record_audio, daemon=True)
+        self.recording_thread.start()
+
+    def record_audio(self):
+        """
+        Continuously record audio when enabled.
+        """
+        while rclpy.ok():
+            if self.recording_enabled:
+                try:
+                    # Open audio stream
+                    stream = self.audio.open(
+                        format=self.audio_format,
+                        channels=self.channels,
+                        rate=self.rate,
+                        input=True,
+                        frames_per_buffer=self.chunk
+                    )
+
+                    self.get_logger().debug('Started recording audio...')
+
+                    # Record for specified duration
+                    frames = []
+                    for _ in range(0, int(self.rate / self.chunk * self.record_seconds)):
+                        if not self.recording_enabled:
+                            break
+                        data = stream.read(self.chunk)
+                        frames.append(data)
+
+                    # Stop and close stream
+                    stream.stop_stream()
+                    stream.close()
+
+                    # Convert to numpy array
+                    audio_data = b''.join(frames)
+                    audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+                    # Add to processing queue
+                    if len(audio_np) > 0:
+                        self.audio_queue.put({
+                            'audio': audio_np,
+                            'timestamp': time.time()
+                        })
+
+                except Exception as e:
+                    self.get_logger().error(f'Error recording audio: {e}')
+                    time.sleep(0.1)
+            else:
+                time.sleep(0.1)  # Check periodically if recording is enabled
+
+    def process_audio_queue(self):
+        """
+        Process audio from the queue using Whisper.
+        """
+        if not self.audio_queue.empty():
+            try:
+                # Get audio from queue
+                item = self.audio_queue.get_nowait()
+                audio_data = item['audio']
+
+                # Process with Whisper
+                result = self.transcribe_audio(audio_data)
+
+                if result and result.text.strip():
+                    self.process_command(result.text.strip())
+                else:
+                    self.get_logger().debug('No speech detected in audio segment')
+
+            except queue.Empty:
+                pass  # Queue is empty
+            except Exception as e:
+                self.get_logger().error(f'Error processing audio: {e}')
+
+    def transcribe_audio(self, audio_data: np.ndarray) -> Optional[whisper.transcribe.TranscriptionResult]:
+        """
+        Transcribe audio using Whisper model.
+        """
+        if self.whisper_model is None:
+            return None
+
+        try:
+            # Transcribe audio with specific parameters for voice commands
+            result = self.whisper_model.transcribe(
+                audio_data,
+                language='en',
+                task='transcribe',
+                temperature=0.0,  # Deterministic output
+                compression_ratio_threshold=2.4,
+                logprob_threshold=-1.0,
+                no_speech_threshold=0.6
+            )
+            return result
+        except Exception as e:
+            self.get_logger().error(f'Error transcribing audio: {e}')
+            return None
+
+    def process_command(self, transcription: str):
+        """
+        Process the transcribed text and execute appropriate actions.
+        """
+        self.get_logger().info(f'Recognized: "{transcription}"')
+        self.publish_status(f'Recognized: {transcription}')
+
+        # Publish the raw command
+        cmd_msg = String()
+        cmd_msg.data = transcription
+        self.voice_command_pub.publish(cmd_msg)
+
+        # Process command using pattern matching
+        self.execute_command_pattern(transcription)
+
+    def execute_command_pattern(self, command: str):
+        """
+        Execute command based on pattern matching.
+        """
+        command_lower = command.lower().strip()
+
+        for pattern, action_func in self.command_patterns.items():
+            match = re.search(pattern, command_lower)
+            if match:
+                groups = match.groups()
+                self.get_logger().info(f'Pattern matched: {pattern}')
+
+                # Call action function with extracted parameters
+                if groups:
+                    action_func(*groups)
+                else:
+                    action_func()
+                return
+
+        # If no pattern matched, check for simple commands
+        if 'forward' in command_lower or 'ahead' in command_lower:
+            self.move_forward()
+        elif 'backward' in command_lower or 'back' in command_lower:
+            self.move_backward()
+        elif 'left' in command_lower and ('turn' in command_lower or 'spin' in command_lower):
+            self.turn_left()
+        elif 'right' in command_lower and ('turn' in command_lower or 'spin' in command_lower):
+            self.turn_right()
+        elif 'stop' in command_lower or 'halt' in command_lower or 'pause' in command_lower:
+            self.stop_robot()
+        else:
+            self.get_logger().info(f'Command not recognized: {command}')
+            self.publish_status(f'Command not recognized: {command}')
+
+    def publish_status(self, status: str):
+        """
+        Publish status message.
+        """
+        status_msg = String()
+        status_msg.data = status
+        self.status_pub.publish(status_msg)
+
+    def move_forward(self):
+        """
+        Move robot forward.
+        """
+        cmd = Twist()
+        cmd.linear.x = 0.3  # m/s
+        self.cmd_vel_pub.publish(cmd)
+        self.publish_status('Moving forward')
+
+    def move_backward(self):
+        """
+        Move robot backward.
+        """
+        cmd = Twist()
+        cmd.linear.x = -0.3  # m/s
+        self.cmd_vel_pub.publish(cmd)
+        self.publish_status('Moving backward')
+
+    def turn_left(self):
+        """
+        Turn robot left.
+        """
+        cmd = Twist()
+        cmd.angular.z = 0.6  # rad/s
+        self.cmd_vel_pub.publish(cmd)
+        self.publish_status('Turning left')
+
+    def turn_right(self):
+        """
+        Turn robot right.
+        """
+        cmd = Twist()
+        cmd.angular.z = -0.6  # rad/s
+        self.cmd_vel_pub.publish(cmd)
+        self.publish_status('Turning right')
+
+    def stop_robot(self):
+        """
+        Stop robot movement.
+        """
+        cmd = Twist()
+        self.cmd_vel_pub.publish(cmd)
+        self.publish_status('Robot stopped')
+
+    def go_to_location(self, location: str):
+        """
+        Navigate to a specific location.
+        """
+        self.publish_status(f'Navigating to: {location}')
+        # In a real implementation, this would use navigation stack
+        # self.navigate_to(location)
+
+    def go_to_robot(self):
+        """
+        Come to the robot's current location (placeholder).
+        """
+        self.publish_status('Coming to robot')
+        # In a real implementation, this would navigate to robot's position
+
+    def follow_mode(self):
+        """
+        Enter follow mode.
+        """
+        self.publish_status('Entering follow mode')
+        # In a real implementation, this would activate person following
+
+    def return_home(self):
+        """
+        Return to home position.
+        """
+        self.publish_status('Returning to home position')
+        # In a real implementation, this would navigate to home
+
+    def grasp_object(self, object_name: str):
+        """
+        Grasp an object.
+        """
+        self.publish_status(f'Attempting to grasp: {object_name}')
+        # In a real implementation, this would use manipulation stack
+
+    def place_object(self, object_name: str):
+        """
+        Place an object.
+        """
+        self.publish_status(f'Attempting to place: {object_name}')
+        # In a real implementation, this would use manipulation stack
+
+    def destroy_node(self):
+        """
+        Clean up resources when node is destroyed.
+        """
+        if hasattr(self, 'audio'):
+            self.audio.terminate()
+        super().destroy_node()
+
+
+class AdvancedVoiceCommandProcessor(WhisperVoiceProcessor):
+    """
+    Advanced voice command processor with context awareness and NLP.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        # Context variables
+        self.robot_position = {'x': 0.0, 'y': 0.0, 'theta': 0.0}
+        self.user_position = {'x': 0.0, 'y': 0.0, 'theta': 0.0}
+        self.target_objects = {}
+        self.command_history = []
+
+        # Enhanced command patterns with parameters
+        self.enhanced_patterns = {
+            # Movement with distance/speed
+            r'(?:go|move|walk)/s+(?:forward|ahead)/s+([0-9.]+)/s+m(?:eter)?s?': self.move_forward_distance,
+            r'(?:turn|spin|rotate)/s+(?:left|right)/s+([0-9.]+)/s+d(?:egree)?s?': self.turn_degrees,
+            # Object manipulation with specifications
+            r'(?:pick|take|grasp)/s+(?:up/s+)?(.+?)/s+from/s+(.+)': self.grasp_object_from_location,
+            r'(?:place|put|drop)/s+(?:down/s+)?(.+?)/s+on/s+(.+)': self.place_object_on_surface,
+            # Conditional commands
+            r'if/s+(.+)/s+then/s+(.+)': self.conditional_command,
+        }
+
+    def process_command(self, transcription: str):
+        """
+        Process transcription with enhanced context awareness.
+        """
+        self.get_logger().info(f'Recognized: "{transcription}"')
+        self.publish_status(f'Recognized: {transcription}')
+
+        # Publish the raw command
+        cmd_msg = String()
+        cmd_msg.data = transcription
+        self.voice_command_pub.publish(cmd_msg)
+
+        # Add to command history
+        self.command_history.append({
+            'command': transcription,
+            'timestamp': time.time()
+        })
+
+        # Process with enhanced patterns first
+        if not self.execute_enhanced_patterns(transcription):
+            # Fall back to basic patterns
+            self.execute_command_pattern(transcription)
+
+    def execute_enhanced_patterns(self, command: str) -> bool:
+        """
+        Execute enhanced command patterns.
+        Return True if a pattern was matched and executed, False otherwise.
+        """
+        command_lower = command.lower().strip()
+
+        for pattern, action_func in self.enhanced_patterns.items():
+            match = re.search(pattern, command_lower)
+            if match:
+                groups = match.groups()
+                self.get_logger().info(f'Enhanced pattern matched: {pattern}')
+
+                # Call action function with extracted parameters
+                if groups:
+                    action_func(*groups)
+                else:
+                    action_func()
+                return True
+
+        return False
+
+    def move_forward_distance(self, distance_str: str):
+        """
+        Move robot forward by specified distance.
+        """
+        try:
+            distance = float(distance_str)
+            self.get_logger().info(f'Moving forward by {distance} meters')
+
+            # In a real implementation, this would use navigation with specific distance
+            cmd = Twist()
+            cmd.linear.x = 0.3  # m/s
+            self.cmd_vel_pub.publish(cmd)
+
+            # Stop after appropriate time (simplified)
+            # time.sleep(distance / 0.3)  # distance / speed = time
+            # self.stop_robot()
+
+            self.publish_status(f'Moving forward by {distance} meters')
+        except ValueError:
+            self.get_logger().error(f'Invalid distance: {distance_str}')
+
+    def turn_degrees(self, angle_str: str):
+        """
+        Turn robot by specified degrees.
+        """
+        try:
+            angle_deg = float(angle_str)
+            angle_rad = np.radians(angle_deg)
+
+            self.get_logger().info(f'Turning by {angle_deg} degrees')
+
+            cmd = Twist()
+            cmd.angular.z = 0.5 if angle_deg > 0 else -0.5  # rad/s
+            self.cmd_vel_pub.publish(cmd)
+
+            self.publish_status(f'Turning by {angle_deg} degrees')
+        except ValueError:
+            self.get_logger().error(f'Invalid angle: {angle_str}')
+
+    def grasp_object_from_location(self, object_name: str, location: str):
+        """
+        Grasp an object from a specific location.
+        """
+        self.publish_status(f'Grasping {object_name} from {location}')
+        # In a real implementation, this would use perception and manipulation
+
+    def place_object_on_surface(self, object_name: str, surface: str):
+        """
+        Place an object on a specific surface.
+        """
+        self.publish_status(f'Placing {object_name} on {surface}')
+        # In a real implementation, this would use manipulation stack
+
+    def conditional_command(self, condition: str, action: str):
+        """
+        Execute command based on a condition.
+        """
+        self.publish_status(f'Conditional command: if {condition} then {action}')
+        # In a real implementation, this would evaluate the condition
+        # and execute the action if true
+
+
+def main(args=None):
+    """
+    Main function to run the Whisper voice command processor.
+    """
+    rclpy.init(args=args)
+
+    # Choose between basic and advanced processor
+    use_advanced = True  # Set to True for advanced features
+
+    if use_advanced:
+        node = AdvancedVoiceCommandProcessor()
+    else:
+        node = WhisperVoiceProcessor()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Audio Preprocessing Pipeline
+
+```python
+#!/usr/bin/env python3
+
+"""
+Audio preprocessing pipeline for Whisper-based voice commands.
+This module handles audio normalization, noise reduction, and formatting.
+"""
+
+import numpy as np
+import scipy.signal
+from scipy.io import wavfile
+import librosa
+from typing import Tuple, Optional
+
+
+class AudioPreprocessor:
+    """
+    Audio preprocessing pipeline for Whisper voice commands.
+    """
+
+    def __init__(self, target_sr: int = 16000, chunk_size: int = 16000):
+        self.target_sr = target_sr
+        self.chunk_size = chunk_size
+
+        # Noise reduction parameters
+        self.noise_threshold = 0.01  # Threshold for noise detection
+        self.smoothing_factor = 0.8  # Factor for smoothing
+
+        # Precomputed constants for efficiency
+        self.window = np.hanning(2048)  # Hanning window for STFT
+
+    def preprocess_audio(self, audio_data: np.ndarray, original_sr: int = 16000) -> np.ndarray:
+        """
+        Preprocess audio data for Whisper input.
+
+        Args:
+            audio_data: Raw audio data as numpy array
+            original_sr: Original sample rate of the audio
+
+        Returns:
+            Preprocessed audio data suitable for Whisper
+        """
+        # Resample to target sample rate if needed
+        if original_sr != self.target_sr:
+            audio_data = self.resample_audio(audio_data, original_sr, self.target_sr)
+
+        # Normalize audio
+        audio_data = self.normalize_audio(audio_data)
+
+        # Apply noise reduction
+        audio_data = self.reduce_noise(audio_data)
+
+        # Apply pre-emphasis filter
+        audio_data = self.pre_emphasis_filter(audio_data)
+
+        return audio_data
+
+    def resample_audio(self, audio_data: np.ndarray, original_sr: int, target_sr: int) -> np.ndarray:
+        """
+        Resample audio to target sample rate.
+        """
+        if len(audio_data) == 0:
+            return audio_data
+
+        # Use librosa for high-quality resampling
+        resampled = librosa.resample(audio_data.astype(np.float32), orig_sr=original_sr, target_sr=target_sr)
+        return resampled
+
+    def normalize_audio(self, audio_data: np.ndarray) -> np.ndarray:
+        """
+        Normalize audio to [-1, 1] range.
+        """
+        if len(audio_data) == 0:
+            return audio_data
+
+        max_abs = np.max(np.abs(audio_data))
+        if max_abs > 0:
+            audio_data = audio_data / max_abs
+        return audio_data
+
+    def reduce_noise(self, audio_data: np.ndarray) -> np.ndarray:
+        """
+        Apply basic noise reduction using spectral subtraction.
+        """
+        if len(audio_data) < 2048:
+            return audio_data
+
+        # Compute STFT
+        stft = librosa.stft(audio_data, n_fft=2048, hop_length=512, win_length=2048)
+
+        # Estimate noise spectrum (first few frames)
+        noise_frames = min(10, stft.shape[1])
+        noise_spectrum = np.mean(np.abs(stft[:, :noise_frames]), axis=1, keepdims=True)
+
+        # Apply spectral subtraction
+        magnitude = np.abs(stft)
+        phase = np.angle(stft)
+
+        # Subtract noise with flooring to prevent over-subtraction
+        enhanced_magnitude = np.maximum(magnitude - 0.3 * noise_spectrum, 0.1 * magnitude)
+
+        # Reconstruct signal
+        enhanced_stft = enhanced_magnitude * np.exp(1j * phase)
+        enhanced_audio = librosa.istft(enhanced_stft, hop_length=512, win_length=2048)
+
+        return enhanced_audio
+
+    def pre_emphasis_filter(self, audio_data: np.ndarray, coefficient: float = 0.97) -> np.ndarray:
+        """
+        Apply pre-emphasis filter to enhance high frequencies.
+        """
+        if len(audio_data) < 2:
+            return audio_data
+
+        # Apply pre-emphasis: y[n] = x[n] - a*x[n-1]
+        emphasized = np.zeros_like(audio_data)
+        emphasized[0] = audio_data[0]
+        emphasized[1:] = audio_data[1:] - coefficient * audio_data[:-1]
+
+        return emphasized
+
+    def detect_speech_activity(self, audio_data: np.ndarray) -> Tuple[np.ndarray, bool]:
+        """
+        Detect if speech activity is present in audio.
+
+        Returns:
+            Tuple of (processed_audio, speech_detected)
+        """
+        if len(audio_data) == 0:
+            return audio_data, False
+
+        # Calculate energy-based VAD (Voice Activity Detection)
+        frame_size = 1024
+        frames = []
+        for i in range(0, len(audio_data), frame_size):
+            frame = audio_data[i:i+frame_size]
+            energy = np.mean(frame ** 2)
+            frames.append(energy)
+
+        # Calculate average energy
+        avg_energy = np.mean(frames)
+
+        # Determine if speech is present
+        speech_detected = avg_energy > self.noise_threshold
+
+        return audio_data, speech_detected
+
+    def chunk_audio(self, audio_data: np.ndarray) -> list:
+        """
+        Chunk audio into smaller segments for processing.
+        """
+        chunks = []
+        for i in range(0, len(audio_data), self.chunk_size):
+            chunk = audio_data[i:i+self.chunk_size]
+            chunks.append(chunk)
+        return chunks
+
+
+class VoiceActivityDetector:
+    """
+    Voice Activity Detection for triggering Whisper processing.
+    """
+
+    def __init__(self, threshold: float = 0.02, silence_frames: int = 10):
+        self.threshold = threshold
+        self.silence_frames = silence_frames
+        self.silence_counter = 0
+        self.listening = False
+
+    def detect_activity(self, audio_chunk: np.ndarray) -> Tuple[bool, bool]:
+        """
+        Detect voice activity in audio chunk.
+
+        Returns:
+            Tuple of (speech_start, speech_end)
+        """
+        # Calculate energy of the chunk
+        energy = np.mean(audio_chunk ** 2)
+
+        if energy > self.threshold:
+            # Voice activity detected
+            if not self.listening:
+                self.listening = True
+                self.silence_counter = 0
+                return True, False  # Speech started
+            else:
+                self.silence_counter = 0
+                return False, False  # Still speaking
+        else:
+            # No voice activity
+            if self.listening:
+                self.silence_counter += 1
+                if self.silence_counter >= self.silence_frames:
+                    self.listening = False
+                    return False, True  # Speech ended
+                else:
+                    return False, False  # Still listening for end
+            else:
+                return False, False  # Silent
+
+
+def test_audio_preprocessing():
+    """
+    Test function for audio preprocessing pipeline.
+    """
+    print("Testing Audio Preprocessing Pipeline...")
+
+    # Create a simple test audio signal
+    sr = 44100
+    duration = 2.0  # seconds
+    t = np.linspace(0, duration, int(sr * duration))
+    test_signal = 0.5 * np.sin(2 * np.pi * 440 * t)  # 440 Hz sine wave
+
+    # Add some noise
+    noise = 0.05 * np.random.randn(len(test_signal))
+    noisy_signal = test_signal + noise
+
+    # Initialize preprocessor
+    preprocessor = AudioPreprocessor(target_sr=16000)
+
+    # Preprocess the signal
+    processed_signal = preprocessor.preprocess_audio(noisy_signal, sr)
+
+    print(f"Original signal length: {len(noisy_signal)} samples")
+    print(f"Processed signal length: {len(processed_signal)} samples")
+    print(f"Processing completed successfully!")
+
+    # Test voice activity detection
+    vad = VoiceActivityDetector()
+    chunk_size = 1024
+    speech_starts = 0
+    speech_ends = 0
+
+    for i in range(0, len(processed_signal), chunk_size):
+        chunk = processed_signal[i:i+chunk_size]
+        if len(chunk) < chunk_size:
+            chunk = np.pad(chunk, (0, chunk_size - len(chunk)), mode='constant')
+
+        start, end = vad.detect_activity(chunk)
+        if start:
+            speech_starts += 1
+        if end:
+            speech_ends += 1
+
+    print(f"Detected {speech_starts} speech starts and {speech_ends} speech ends")
+
+
+if __name__ == "__main__":
+    test_audio_preprocessing()
+```
+
+### ROS 2 Action Server Integration
+
+```python
+#!/usr/bin/env python3
+
+"""
+ROS 2 Action Server for Voice Commands
+This module implements an action server that can be triggered by voice commands.
+"""
+
+import rclpy
+from rclpy.action import ActionServer, GoalResponse, CancelResponse
+from rclpy.node import Node
+from rclpy.qos import QoSProfile
+
+from std_msgs.msg import String
+from geometry_msgs.msg import PoseStamped
+from nav2_msgs.action import NavigateToPose
+from manipulation_msgs.action import PickUpObject, PlaceObject
+
+import time
+from typing import Optional
+
+
+class VoiceCommandActionServer(Node):
+    """
+    Action server that handles voice command goals.
+    """
+
+    def __init__(self):
+        super().__init__('voice_command_action_server')
+
+        # Action servers for different types of voice commands
+        self.nav_to_pose_server = ActionServer(
+            self,
+            NavigateToPose,
+            'voice_navigate_to_pose',
+            self.execute_nav_goal
+        )
+
+        self.pick_up_server = ActionServer(
+            self,
+            PickUpObject,
+            'voice_pick_up_object',
+            self.execute_pickup_goal
+        )
+
+        self.place_server = ActionServer(
+            self,
+            PlaceObject,
+            'voice_place_object',
+            self.execute_place_goal
+        )
+
+        # Publishers for intermediate feedback
+        self.status_pub = self.create_publisher(String, '/voice_action_status', 10)
+
+        # Voice command subscriber
+        self.voice_cmd_sub = self.create_subscription(
+            String,
+            '/voice_commands',
+            self.voice_command_callback,
+            QoSProfile(depth=10)
+        )
+
+        self.get_logger().info('Voice Command Action Server initialized')
+
+    def voice_command_callback(self, msg: String):
+        """
+        Process incoming voice commands and trigger appropriate actions.
+        """
+        command = msg.data.lower()
+        self.get_logger().info(f'Processing voice command: {command}')
+
+        # Parse command and trigger appropriate action
+        if 'navigate to' in command or 'go to' in command:
+            # Extract location from command
+            location = self.extract_location(command)
+            self.trigger_navigation(location)
+        elif 'pick up' in command or 'grasp' in command:
+            # Extract object from command
+            obj = self.extract_object(command)
+            self.trigger_pickup(obj)
+        elif 'place' in command or 'put down' in command:
+            # Extract object and location
+            obj, location = self.extract_object_and_location(command)
+            self.trigger_place(obj, location)
+
+    def extract_location(self, command: str) -> str:
+        """
+        Extract location from voice command.
+        """
+        # Simple extraction - in practice, this would use NLP
+        if 'navigate to' in command:
+            parts = command.split('navigate to')
+        elif 'go to' in command:
+            parts = command.split('go to')
+        else:
+            parts = [command]
+
+        if len(parts) > 1:
+            return parts[1].strip()
+        else:
+            return "unknown location"
+
+    def extract_object(self, command: str) -> str:
+        """
+        Extract object from voice command.
+        """
+        # Simple extraction - in practice, this would use NLP
+        if 'pick up' in command:
+            parts = command.split('pick up')
+        elif 'grasp' in command:
+            parts = command.split('grasp')
+        else:
+            parts = [command]
+
+        if len(parts) > 1:
+            return parts[1].strip()
+        else:
+            return "unknown object"
+
+    def extract_object_and_location(self, command: str) -> tuple:
+        """
+        Extract object and location from voice command.
+        """
+        # Simple extraction - in practice, this would use NLP
+        obj = "unknown object"
+        location = "unknown location"
+
+        if 'place' in command:
+            parts = command.split('place')
+            if len(parts) > 1:
+                remaining = parts[1].strip()
+                if 'on' in remaining:
+                    obj_parts = remaining.split('on')
+                    obj = obj_parts[0].strip()
+                    location = obj_parts[1].strip()
+
+        return obj, location
+
+    def trigger_navigation(self, location: str):
+        """
+        Trigger navigation to a location.
+        """
+        self.get_logger().info(f'Triggering navigation to: {location}')
+
+        # In a real implementation, this would send a navigation goal
+        # For now, we'll just log and publish status
+        status_msg = String()
+        status_msg.data = f'Navigating to {location}'
+        self.status_pub.publish(status_msg)
+
+    def trigger_pickup(self, obj: str):
+        """
+        Trigger pickup of an object.
+        """
+        self.get_logger().info(f'Triggering pickup of: {obj}')
+
+        # In a real implementation, this would send a pickup goal
+        status_msg = String()
+        status_msg.data = f'Picking up {obj}'
+        self.status_pub.publish(status_msg)
+
+    def trigger_place(self, obj: str, location: str):
+        """
+        Trigger placing of an object.
+        """
+        self.get_logger().info(f'Triggering placement of {obj} at {location}')
+
+        # In a real implementation, this would send a place goal
+        status_msg = String()
+        status_msg.data = f'Placing {obj} at {location}'
+        self.status_pub.publish(status_msg)
+
+    def execute_nav_goal(self, goal_handle):
+        """
+        Execute navigation goal from voice command.
+        """
+        self.get_logger().info('Executing navigation goal from voice command')
+
+        feedback_msg = NavigateToPose.Feedback()
+        result = NavigateToPose.Result()
+
+        # Simulate navigation
+        for i in range(10):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info('Navigation goal canceled')
+                return result
+
+            # Update feedback
+            feedback_msg.current_pose = goal_handle.request.pose
+            feedback_msg.distance_remaining = 1.0 - (i * 0.1)
+            goal_handle.publish_feedback(feedback_msg)
+
+            time.sleep(0.5)  # Simulate navigation time
+
+        goal_handle.succeed()
+        result.result = True
+        self.get_logger().info('Navigation goal succeeded')
+        return result
+
+    def execute_pickup_goal(self, goal_handle):
+        """
+        Execute pickup goal from voice command.
+        """
+        self.get_logger().info('Executing pickup goal from voice command')
+
+        feedback_msg = PickUpObject.Feedback()
+        result = PickUpObject.Result()
+
+        # Simulate pickup
+        for i in range(5):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info('Pickup goal canceled')
+                return result
+
+            # Update feedback
+            feedback_msg.current_state = f'Picking up object... {i+1}/5'
+            goal_handle.publish_feedback(feedback_msg)
+
+            time.sleep(0.5)  # Simulate pickup time
+
+        goal_handle.succeed()
+        result.success = True
+        self.get_logger().info('Pickup goal succeeded')
+        return result
+
+    def execute_place_goal(self, goal_handle):
+        """
+        Execute place goal from voice command.
+        """
+        self.get_logger().info('Executing place goal from voice command')
+
+        feedback_msg = PlaceObject.Feedback()
+        result = PlaceObject.Result()
+
+        # Simulate placement
+        for i in range(5):
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                self.get_logger().info('Place goal canceled')
+                return result
+
+            # Update feedback
+            feedback_msg.current_state = f'Placing object... {i+1}/5'
+            goal_handle.publish_feedback(feedback_msg)
+
+            time.sleep(0.5)  # Simulate placement time
+
+        goal_handle.succeed()
+        result.success = True
+        self.get_logger().info('Place goal succeeded')
+        return result
+
+    def destroy_node(self):
+        """
+        Clean up action servers when node is destroyed.
+        """
+        self.nav_to_pose_server.destroy()
+        self.pick_up_server.destroy()
+        self.place_server.destroy()
+        super().destroy_node()
+
+
+def main(args=None):
+    """
+    Main function to run the voice command action server.
+    """
+    rclpy.init(args=args)
+
+    action_server = VoiceCommandActionServer()
+
+    try:
+        rclpy.spin(action_server)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        action_server.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![Voice Command Processing Pipeline](/img/diagrams/voice-command-pipeline.png)
+
+*Figure 1: Voice command processing pipeline showing the flow from audio capture through Whisper recognition to robot action execution.*
+
+## Hands-On Lab
+
+### Exercise 1: Basic Voice Command Recognition
+Implement a basic voice command system:
+
+1. Set up Whisper model for voice recognition
+2. Implement audio capture and preprocessing
+3. Create command pattern matching system
+4. Test with simple movement commands
+5. Evaluate recognition accuracy and response time
+
+### Exercise 2: Advanced Command Processing
+Implement advanced command processing:
+
+1. Add context awareness to command processing
+2. Implement entity extraction for objects and locations
+3. Create conditional command handling
+4. Test with complex multi-part commands
+5. Evaluate the system's ability to handle ambiguous commands
+
+### Exercise 3: Action Server Integration
+Integrate with ROS 2 action servers:
+
+1. Create action servers for different robot behaviors
+2. Connect voice command recognition to action goals
+3. Implement feedback and status reporting
+4. Test the complete voice-to-action pipeline
+5. Evaluate system reliability and error handling
+
+## Troubleshooting
+
+Common voice command processing issues and solutions:
+
+- **Issue: Poor recognition accuracy**: Use higher quality microphones, improve audio preprocessing, or fine-tune Whisper model on robotics-specific data.
+- **Issue: High latency**: Use smaller Whisper models, optimize audio processing pipeline, or implement streaming recognition.
+- **Issue: Background noise interference**: Implement advanced noise reduction, use beamforming microphones, or improve acoustic isolation.
+- **Issue: Ambiguous command interpretation**: Implement context awareness, use dialogue management, or add confirmation steps.
+
+## Summary
+
+This chapter covered the implementation of voice command processing for humanoid robots using OpenAI Whisper. We explored the principles of speech recognition, implemented audio preprocessing pipelines, and integrated voice commands with ROS 2 action servers. The combination of Whisper's high accuracy and ROS 2's action framework enables robust and responsive voice-controlled robot interaction.
+
+## Further Reading
+
+- OpenAI Whisper Documentation
+- Speech Recognition for Robotics
+- Natural Language Processing for Robot Control
+- ROS 2 Action Server Programming
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a dialogue manager that can handle multi-turn conversations with the robot.
+2. Create a voice command system that learns new commands through demonstration.
+3. Develop a noise-robust audio preprocessing pipeline for outdoor robot applications.
+
+<!-- Optional: Add custom components for interactive elements -->

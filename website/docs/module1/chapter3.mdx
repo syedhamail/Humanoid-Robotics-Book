@@ -1,0 +1,273 @@
+---
+title: "Building Python ROS Packages (rclpy)"
+description: Creating and structuring ROS 2 packages using Python and the rclpy client library
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Create a properly structured ROS 2 Python package
+- Use rclpy to create nodes, publishers, and subscribers
+- Implement services and clients in Python
+- Structure Python code following ROS 2 best practices
+- Create and use custom message and service definitions
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Chapters 1 and 2 on Physical AI and ROS 2 core concepts
+- Have ROS 2 Humble Hawksbill installed on Ubuntu 22.04
+- Be familiar with Python programming concepts
+- Understand the basics of nodes, topics, and services from Chapter 2
+
+## Introduction
+
+ROS 2 (Robot Operating System 2) provides a flexible framework for developing robot applications through a distributed system of nodes that communicate via topics, services, and actions. The `rclpy` library is the official Python client library for ROS 2, enabling Python developers to create ROS 2 nodes and participate in the ROS 2 communication ecosystem.
+
+In this chapter, we'll explore how to create well-structured ROS 2 packages using Python. We'll cover the proper package structure, node creation patterns, and best practices for organizing your code.
+
+## Core Concepts
+
+### ROS 2 Package Structure
+
+A ROS 2 Python package typically follows this structure:
+
+```
+ros2_arm_control/           # Package name (lowercase with underscores)
+├── ros2_arm_control/       # Python module (same name as package)
+│   ├── __init__.py        # Makes it a Python package
+│   ├── arm_controller.py  # Node implementation
+│   └── utils.py           # Helper functions
+├── launch/                 # Launch files
+│   └── arm_control.launch.py
+├── URDF/                   # Robot description files
+│   └── humanoid_arm.URDF
+├── srv/                    # Custom service definitions
+├── msg/                    # Custom message definitions
+├── CMakeLists.txt         # Build configuration (even for Python packages)
+├── package.xml            # Package metadata
+└── setup.py               # Python package configuration
+```
+
+### Using rclpy
+
+The `rclpy` library provides Python bindings for ROS 2. Key components include:
+- `rclpy.init()` - Initialize the ROS 2 client library
+- `Node` class - Base class for creating ROS 2 nodes
+- Publisher/Subscriber classes - For topic communication
+- Client/Server classes - For service communication
+- Timer functionality - For periodic callbacks
+
+### Node Lifecycle
+
+ROS 2 nodes follow a standard lifecycle:
+1. Initialization with `super().__init__()`
+2. Setting up publishers, subscribers, services, clients
+3. Spinning to process callbacks
+4. Cleanup when shutting down
+
+## Code Examples
+
+### Basic Node Structure
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+
+class MinimalNode(Node):
+    def __init__(self):
+        super().__init__('minimal_node')
+        self.get_logger().info('Minimal node initialized')
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    minimal_node = MinimalNode()
+
+    try:
+        rclpy.spin(minimal_node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        minimal_node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+### Publisher-Subscriber Example
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+class Talker(Node):
+    def __init__(self):
+        super().__init__('talker')
+        self.publisher = self.create_publisher(String, 'chatter', 10)
+
+        timer_period = 0.5  # seconds
+        self.timer = self.create_timer(timer_period, self.timer_callback)
+        self.i = 0
+
+    def timer_callback(self):
+        msg = String()
+        msg.data = f'Hello World: {self.i}'
+        self.publisher.publish(msg)
+        self.get_logger().info(f'Publishing: "{msg.data}"')
+        self.i += 1
+
+class Listener(Node):
+    def __init__(self):
+        super().__init__('listener')
+        self.subscription = self.create_subscription(
+            String,
+            'chatter',
+            self.listener_callback,
+            10)
+        self.subscription  # prevent unused variable warning
+
+    def listener_callback(self, msg):
+        self.get_logger().info(f'I heard: "{msg.data}"')
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    talker = Talker()
+    listener = Listener()
+
+    # Run both nodes in the same process
+    try:
+        rclpy.spin_once(talker)
+        rclpy.spin_once(listener)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        talker.destroy_node()
+        listener.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+### Service Client-Server Example
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from example_interfaces.srv import AddTwoInts
+
+class MinimalService(Node):
+    def __init__(self):
+        super().__init__('minimal_service')
+        self.srv = self.create_service(
+            AddTwoInts,
+            'add_two_ints',
+            self.add_two_ints_callback)
+
+    def add_two_ints_callback(self, request, response):
+        response.sum = request.a + request.b
+        self.get_logger().info(f'Returning {request.a} + {request.b} = {response.sum}')
+        return response
+
+class MinimalClient(Node):
+    def __init__(self):
+        super().__init__('minimal_client')
+        self.cli = self.create_client(AddTwoInts, 'add_two_ints')
+
+        while not self.cli.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting again...')
+
+        self.req = AddTwoInts.Request()
+
+    def send_request(self, a, b):
+        self.req.a = a
+        self.req.b = b
+        future = self.cli.call_async(self.req)
+        rclpy.spin_until_future_complete(self, future)
+        return future.result()
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    minimal_service = MinimalService()
+    minimal_client = MinimalClient()
+
+    # Send request
+    response = minimal_client.send_request(2, 3)
+    minimal_client.get_logger().info(f'Result: {response.sum}')
+
+    # Clean up
+    minimal_service.destroy_node()
+    minimal_client.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![ROS 2 Node Structure](/img/diagrams/ROS 2-node-structure.png)
+
+*Figure 1: The structure of a typical ROS 2 node showing initialization, publishers, subscribers, and callbacks.*
+
+## Hands-On Lab
+
+### Exercise 1: Create a Temperature Monitor Node
+Create a ROS 2 node that simulates a temperature sensor:
+
+1. Create a new package: `temperature_monitor`
+2. Implement a node that publishes temperature readings to a topic
+3. Add a subscriber that logs temperature data
+4. Use a timer to simulate periodic sensor readings
+
+### Exercise 2: Custom Service Implementation
+Extend the temperature monitor with a custom service:
+
+1. Create a custom service definition for setting temperature thresholds
+2. Implement a service server that manages temperature alerts
+3. Create a client that can configure the threshold
+4. Test the service with different threshold values
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: ModuleNotFoundError for rclpy**: Make sure ROS 2 is sourced (`source /opt/ros/humble/setup.bash`) and the Python environment is activated.
+- **Issue: Node names conflict**: Use unique node names or add namespace prefixes.
+- **Issue: Import errors**: Check that your `setup.py` correctly specifies the Python modules and entry points.
+- **Issue: Callbacks not executing**: Ensure you're calling `rclpy.spin()` or using an executor properly.
+
+## Summary
+
+This chapter covered the fundamentals of creating ROS 2 packages using Python and the rclpy client library. We explored proper package structure, node creation patterns, and communication mechanisms. Understanding these concepts is crucial for developing well-structured ROS 2 applications.
+
+## Further Reading
+
+- ROS 2 Python Developer Guide
+- rclpy API Documentation
+- ROS 2 Package Best Practices
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Create a ROS 2 package that implements a simple PID controller node.
+2. Modify the talker/listener example to use a custom message type.
+3. Implement a node that uses both publishers and services for different communication patterns.
+
+<!-- Optional: Add custom components for interactive elements -->

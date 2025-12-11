@@ -1,0 +1,524 @@
+---
+title: "Overview of NVIDIA Isaac Sim + SDK"
+description: Introduction to NVIDIA Isaac Sim for robotics simulation and development
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the architecture and capabilities of NVIDIA Isaac Sim
+- Identify the advantages of Isaac Sim for humanoid robotics simulation
+- Recognize the key components of the Isaac Sim ecosystem
+- Compare Isaac Sim with other simulation platforms
+- Set up Isaac Sim for robotics development
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Modules 1 and 2 on ROS 2 fundamentals and physics simulation
+- Understand the basics of 3D simulation and rendering
+- Have experience with GPU-accelerated applications
+- Be familiar with USD (Universal Scene Description) concepts
+
+## Introduction
+
+NVIDIA Isaac Sim is a comprehensive robotics simulation environment built on NVIDIA's Omniverse platform. It provides high-fidelity physics simulation, photorealistic rendering, and synthetic data generation capabilities specifically designed for robotics development. Isaac Sim leverages NVIDIA's RTX technology to deliver physically accurate simulations with realistic lighting, materials, and sensor modeling.
+
+For humanoid robotics, Isaac Sim offers several key advantages:
+- **Photorealistic Rendering**: Advanced rendering capabilities for synthetic data generation
+- **Accurate Physics**: High-fidelity physics simulation for dynamic behaviors
+- **Sensor Simulation**: Realistic models for cameras, LiDAR, IMUs, and other sensors
+- **AI Integration**: Built-in tools for training AI models with synthetic data
+- **Domain Randomization**: Tools for improving model robustness through environment variation
+
+Isaac Sim is built on the Universal Scene Description (USD) format, which enables complex scene composition and collaboration across different tools and platforms. This makes it particularly well-suited for developing humanoid robots that require complex interactions with realistic environments.
+
+## Core Concepts
+
+### Isaac Sim Architecture
+
+Isaac Sim consists of several key components:
+- **Omniverse Nucleus**: Central server for asset storage and collaboration
+- **Kit Application Framework**: Extensible application framework for simulation
+- **PhysX Physics Engine**: High-performance physics simulation
+- **RTX Renderer**: Photorealistic rendering pipeline
+- **Isaac ROS Bridge**: Integration with ROS 2 for robotics workflows
+- **Synthetic Data Generation Tools**: For creating labeled datasets
+
+### USD in Robotics
+
+Universal Scene Description (USD) is Pixar's scene description format that Isaac Sim uses extensively:
+- **Scalability**: Handle complex scenes with millions of polygons
+- **Composition**: Layer multiple assets and scenes together
+- **Collaboration**: Enable multiple users to work on the same scene
+- **Extensibility**: Support custom schemas and plugins
+
+### Isaac ROS Integration
+
+The Isaac ROS integration provides:
+- **Message Bridge**: Bidirectional communication between Isaac Sim and ROS 2
+- **Sensor Simulation**: Realistic sensor models with ROS 2 interfaces
+- **Robot Control**: Integration with ROS 2 control frameworks
+- **Perception Pipeline**: Tools for developing perception algorithms
+
+### Synthetic Data Generation
+
+Isaac Sim's synthetic data capabilities include:
+- **Photorealistic Images**: With depth, segmentation, and normal maps
+- **Sensor Data**: LiDAR, radar, IMU, and other sensor modalities
+- **Automatic Annotation**: Ground truth labels for training data
+- **Domain Randomization**: Variation in lighting, textures, and objects
+
+### Performance Considerations
+
+Isaac Sim performance depends on:
+- **GPU Capability**: RTX 40xx series recommended for optimal performance
+- **Scene Complexity**: Number of objects, lights, and materials
+- **Simulation Parameters**: Time step, solver iterations, and accuracy settings
+- **Rendering Quality**: Resolution, ray tracing settings, and post-processing
+
+## Code Examples
+
+### Basic Isaac Sim Setup
+
+```python
+#!/usr/bin/env python3
+
+import omni
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.utils.nucleus import find_nucleus_server
+from omni.isaac.core.robots import Robot
+from omni.isaac.core.prims import RigidPrim, XFormPrim
+from omni.isaac.core.objects import DynamicCuboid
+import numpy as np
+import carb
+
+
+class IsaacSimEnvironment:
+    """
+    Basic Isaac Sim environment for humanoid robotics simulation.
+    """
+
+    def __init__(self):
+        self.world = None
+        self.robot = None
+        self.objects = []
+
+        # Initialize Isaac Sim world
+        self.setup_world()
+
+    def setup_world(self):
+        """Set up the basic simulation environment."""
+        # Create the world instance
+        self.world = World(stage_units_in_meters=1.0)
+
+        # Set up basic physics parameters
+        self.world.scene.add_default_ground_plane()
+
+        # Add lighting
+        self.setup_lighting()
+
+        # Set up default camera view
+        self.setup_camera()
+
+        print("Isaac Sim environment initialized")
+
+    def setup_lighting(self):
+        """Configure scene lighting."""
+        # Add dome light for overall illumination
+        from omni.isaac.core.utils.prims import define_prim
+        from pxr import UsdLux
+
+        dome_light_prim = define_prim("/World/Light/DomeLight", "DomeLight")
+        dome_light_prim.GetAttribute("inputs:intensity").Set(3000)
+        dome_light_prim.GetAttribute("inputs:color").Set(carb.Float3(0.9, 0.9, 0.9))
+
+    def setup_camera(self):
+        """Set up the default camera."""
+        from omni.isaac.core.utils.prims import get_prim_at_path
+        from omni.kit.viewport.utility import get_active_viewport
+
+        # Set default camera position
+        viewport = get_active_viewport()
+        viewport.camera_position = (-2.0, -2.0, 2.0)
+        viewport.camera_target = (0.0, 0.0, 0.0)
+
+    def load_robot(self, robot_usd_path, position=[0, 0, 1.0]):
+        """Load a robot model into the simulation."""
+        try:
+            # Add robot to stage
+            add_reference_to_stage(
+                usd_path=robot_usd_path,
+                prim_path="/World/Robot"
+            )
+
+            # Create robot object
+            self.robot = Robot(
+                prim_path="/World/Robot",
+                name="humanoid_robot",
+                position=position,
+                orientation=[0, 0, 0, 1]
+            )
+
+            # Add to world
+            self.world.scene.add(self.robot)
+
+            print(f"Robot loaded from {robot_usd_path}")
+            return True
+
+        except Exception as e:
+            print(f"Failed to load robot: {e}")
+            return False
+
+    def add_obstacle(self, position, size=(0.2, 0.2, 0.2), color=(0.8, 0.1, 0.1)):
+        """Add an obstacle to the environment."""
+        obstacle = self.world.scene.add(
+            DynamicCuboid(
+                prim_path=f"/World/Obstacle_{len(self.objects)}",
+                name=f"obstacle_{len(self.objects)}",
+                position=position,
+                size=size,
+                color=color
+            )
+        )
+        self.objects.append(obstacle)
+        return obstacle
+
+    def reset_environment(self):
+        """Reset the simulation to initial state."""
+        self.world.reset()
+
+        # Reset robot position if loaded
+        if self.robot:
+            self.robot.set_world_pose(position=[0, 0, 1.0], orientation=[0, 0, 0, 1])
+
+    def step_simulation(self, dt=1/60):
+        """Step the simulation forward by dt seconds."""
+        self.world.step(render=True)
+
+    def run_simulation(self, steps=1000):
+        """Run the simulation for a specified number of steps."""
+        for i in range(steps):
+            self.step_simulation()
+
+            # Print progress every 100 steps
+            if i % 100 == 0:
+                print(f"Simulation step {i}/{steps}")
+
+            # Reset if world is done
+            if self.world.is_playing():
+                pass  # Continue simulation
+            else:
+                break
+
+
+def main():
+    """Main function to run the Isaac Sim environment."""
+    # Initialize Omni
+    omni.kit.GlobalStartupParams().initialize()
+
+    # Create simulation environment
+    sim_env = IsaacSimEnvironment()
+
+    # Load a sample robot (this would be your humanoid model)
+    # robot_loaded = sim_env.load_robot("/path/to/humanoid_robot.usd")
+
+    # Add some obstacles
+    sim_env.add_obstacle(position=[1.0, 0.0, 0.1])
+    sim_env.add_obstacle(position=[-1.0, 0.5, 0.1])
+
+    # Run simulation
+    sim_env.run_simulation(steps=600)  # Run for 10 seconds at 60 FPS
+
+    # Cleanup
+    sim_env.world.clear()
+    omni.kit.App().get().shutdown()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Isaac ROS Bridge Integration
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState, Image, PointCloud2, Imu, LaserScan
+from geometry_msgs.msg import Twist, PoseStamped
+from std_msgs.msg import Header, Float32
+import numpy as np
+import cv2
+from cv_bridge import CvBridge
+
+
+class IsaacROSBridge(Node):
+    """
+    Bridge node for connecting Isaac Sim with ROS 2.
+    """
+
+    def __init__(self):
+        super().__init__('isaac_ros_bridge')
+
+        # Initialize CV bridge
+        self.cv_bridge = CvBridge()
+
+        # Publishers for Isaac Sim sensor data
+        self.joint_state_pub = self.create_publisher(JointState, '/isaac/joint_states', 10)
+        self.camera_image_pub = self.create_publisher(Image, '/isaac/camera/rgb/image_raw', 10)
+        self.depth_image_pub = self.create_publisher(Image, '/isaac/camera/depth/image_raw', 10)
+        self.imu_pub = self.create_publisher(Imu, '/isaac/imu/data', 10)
+        self.lidar_pub = self.create_publisher(LaserScan, '/isaac/lidar/scan', 10)
+
+        # Subscribers for commands to Isaac Sim
+        self.cmd_vel_sub = self.create_subscription(
+            Twist,
+            '/cmd_vel',
+            self.cmd_vel_callback,
+            10
+        )
+
+        self.joint_cmd_sub = self.create_subscription(
+            JointState,
+            '/joint_commands',
+            self.joint_command_callback,
+            10
+        )
+
+        # Timer for publishing sensor data
+        self.sensor_timer = self.create_timer(0.033, self.publish_sensor_data)  # ~30Hz
+
+        # Internal state
+        self.current_joint_positions = {}
+        self.current_robot_pose = {'x': 0.0, 'y': 0.0, 'theta': 0.0}
+        self.last_cmd_vel = {'linear': {'x': 0.0}, 'angular': {'z': 0.0}}
+
+        self.get_logger().info('Isaac ROS Bridge initialized')
+
+    def cmd_vel_callback(self, msg):
+        """Handle velocity commands from ROS 2."""
+        self.last_cmd_vel['linear']['x'] = msg.linear.x
+        self.last_cmd_vel['angular']['z'] = msg.angular.z
+
+        # In a real implementation, this would send commands to Isaac Sim
+        self.get_logger().debug(f'Received cmd_vel: linear.x={msg.linear.x}, angular.z={msg.angular.z}')
+
+    def joint_command_callback(self, msg):
+        """Handle joint commands from ROS 2."""
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                self.current_joint_positions[name] = msg.position[i]
+
+        self.get_logger().debug(f'Received {len(msg.name)} joint commands')
+
+    def publish_sensor_data(self):
+        """Publish sensor data from Isaac Sim to ROS 2."""
+        # Publish joint states
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.header.frame_id = 'base_link'
+
+        # Add some example joint positions (in a real implementation, these would come from Isaac Sim)
+        joint_names = ['hip_joint', 'knee_joint', 'ankle_joint', 'shoulder_joint', 'elbow_joint']
+        for i, name in enumerate(joint_names):
+            joint_state_msg.name.append(name)
+            # Simulate changing joint positions
+            position = np.sin(self.get_clock().now().nanoseconds / 1e9 + i) * 0.5
+            joint_state_msg.position.append(position)
+            joint_state_msg.velocity.append(0.0)
+            joint_state_msg.effort.append(0.0)
+
+        self.joint_state_pub.publish(joint_state_msg)
+
+        # Publish IMU data
+        imu_msg = Imu()
+        imu_msg.header.stamp = self.get_clock().now().to_msg()
+        imu_msg.header.frame_id = 'imu_link'
+
+        # Simulate IMU readings
+        t = self.get_clock().now().nanoseconds / 1e9
+        imu_msg.linear_acceleration.x = np.sin(t) * 9.81
+        imu_msg.linear_acceleration.y = np.cos(t) * 0.1
+        imu_msg.linear_acceleration.z = np.cos(t * 2) * 9.81
+
+        imu_msg.angular_velocity.x = np.sin(t * 3) * 0.5
+        imu_msg.angular_velocity.y = np.cos(t * 2) * 0.3
+        imu_msg.angular_velocity.z = np.sin(t * 1.5) * 0.8
+
+        # Orientation (simplified)
+        imu_msg.orientation.w = np.cos(t * 0.5)
+        imu_msg.orientation.x = np.sin(t * 0.5) * 0.1
+        imu_msg.orientation.y = np.sin(t * 0.5) * 0.1
+        imu_msg.orientation.z = np.sin(t * 0.5) * 0.9
+
+        self.imu_pub.publish(imu_msg)
+
+        # Publish a simulated camera image
+        # In a real implementation, this would come from Isaac Sim's camera sensor
+        width, height = 640, 480
+        image_array = np.random.randint(0, 255, (height, width, 3), dtype=np.uint8)
+        image_msg = self.cv_bridge.cv2_to_imgmsg(image_array, encoding="bgr8")
+        image_msg.header.stamp = self.get_clock().now().to_msg()
+        image_msg.header.frame_id = 'camera_rgb_optical_frame'
+        self.camera_image_pub.publish(image_msg)
+
+    def get_isaac_sim_sensor_data(self):
+        """Get sensor data from Isaac Sim (placeholder for real implementation)."""
+        # This would interface with Isaac Sim's Python API to get actual sensor data
+        # For now, we'll simulate the data
+        pass
+
+
+class IsaacSimController(Node):
+    """
+    Controller node for sending commands to Isaac Sim.
+    """
+
+    def __init__(self):
+        super().__init__('isaac_sim_controller')
+
+        # Subscriptions for high-level commands
+        self.navigation_sub = self.create_subscription(
+            PoseStamped,
+            '/goal_pose',
+            self.navigation_goal_callback,
+            10
+        )
+
+        self.manipulation_sub = self.create_subscription(
+            String,
+            '/manipulation_command',
+            self.manipulation_command_callback,
+            10
+        )
+
+        # Timer for control loop
+        self.control_timer = self.create_timer(0.05, self.control_loop)  # 20Hz
+
+        # Internal state
+        self.navigation_goal = None
+        self.manipulation_task = None
+
+        self.get_logger().info('Isaac Sim Controller initialized')
+
+    def navigation_goal_callback(self, msg):
+        """Handle navigation goals."""
+        self.navigation_goal = {
+            'x': msg.pose.position.x,
+            'y': msg.pose.position.y,
+            'orientation': msg.pose.orientation
+        }
+        self.get_logger().info(f'New navigation goal: ({self.navigation_goal["x"]}, {self.navigation_goal["y"]})')
+
+    def manipulation_command_callback(self, msg):
+        """Handle manipulation commands."""
+        self.manipulation_task = msg.data
+        self.get_logger().info(f'New manipulation task: {self.manipulation_task}')
+
+    def control_loop(self):
+        """Main control loop for interfacing with Isaac Sim."""
+        # In a real implementation, this would send commands to Isaac Sim
+        # based on navigation goals and manipulation tasks
+        pass
+
+    def send_command_to_isaac(self, command_type, parameters):
+        """Send a command to Isaac Sim."""
+        # Placeholder for actual Isaac Sim API calls
+        self.get_logger().debug(f'Sending command to Isaac Sim: {command_type} with {parameters}')
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    isaac_bridge = IsaacROSBridge()
+    isaac_controller = IsaacSimController()
+
+    # Use MultiThreadedExecutor to handle both nodes
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(isaac_bridge)
+    executor.add_node(isaac_controller)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        isaac_bridge.destroy_node()
+        isaac_controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![Isaac Sim Architecture](/img/diagrams/isaac-sim-architecture.svg)
+
+*Figure 1: Architecture of NVIDIA Isaac Sim showing the integration between Omniverse, PhysX physics, RTX rendering, and ROS 2 bridge.*
+
+## Hands-On Lab
+
+### Exercise 1: Isaac Sim Installation and Setup
+Install and configure Isaac Sim for humanoid robotics:
+
+1. Install Isaac Sim from NVIDIA Omniverse Launcher
+2. Verify GPU compatibility (RTX 40xx recommended)
+3. Test basic scene loading and rendering
+4. Verify ROS 2 bridge functionality
+5. Document system requirements and performance characteristics
+
+### Exercise 2: Robot Model Integration
+Import a humanoid robot model into Isaac Sim:
+
+1. Create or obtain a USD-formatted humanoid robot model
+2. Verify the model's kinematic structure and joint definitions
+3. Test the model's physics properties and collision geometry
+4. Validate the model's visual appearance and materials
+5. Test basic joint control through Isaac Sim interface
+
+### Exercise 3: Sensor Simulation
+Configure and test sensor simulation in Isaac Sim:
+
+1. Add camera sensors to the robot model
+2. Configure LiDAR sensor parameters
+3. Set up IMU and other inertial sensors
+4. Verify that sensor data is being generated correctly
+5. Test the integration with ROS 2 topics
+
+## Troubleshooting
+
+Common Isaac Sim issues and solutions:
+
+- **Issue: GPU not supported**: Verify that you have an NVIDIA RTX 30xx or 40xx series GPU with updated drivers installed.
+- **Issue: Performance is poor**: Reduce scene complexity, lower rendering quality settings, or use proxy representations during simulation.
+- **Issue: ROS 2 bridge not connecting**: Check that both Isaac Sim and ROS 2 networks are properly configured and accessible.
+- **Issue: Robot model not loading**: Verify USD file validity and ensure all referenced assets are available.
+
+## Summary
+
+This chapter introduced NVIDIA Isaac Sim as a powerful platform for humanoid robotics simulation. We covered the core architecture, advantages over other simulation platforms, and the integration with ROS 2. Isaac Sim's combination of photorealistic rendering and accurate physics makes it ideal for developing and testing humanoid robots in complex scenarios.
+
+## Further Reading
+
+- NVIDIA Isaac Sim Documentation
+- Omniverse and USD Guide for Robotics
+- Isaac ROS Integration Tutorials
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Create a USD scene with multiple humanoid robots interacting in a complex environment.
+2. Implement a custom Isaac Sim extension for specialized humanoid behaviors.
+3. Develop a domain randomization pipeline for improving model robustness.
+
+<!-- Optional: Add custom components for interactive elements -->

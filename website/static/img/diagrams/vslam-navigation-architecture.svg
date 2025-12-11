@@ -1,0 +1,61 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">VSLAM Navigation Architecture</text>
+
+  <!-- Camera Input -->
+  <rect x="100" y="80" width="150" height="80" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="10"/>
+  <text x="175" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Camera Input</text>
+  <text x="175" y="135" text-anchor="middle" font-family="Arial" font-size="12">RGB + Depth</text>
+
+  <!-- Feature Detection -->
+  <rect x="325" y="80" width="150" height="80" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="400" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Feature Detection</text>
+  <text x="400" y="135" text-anchor="middle" font-family="Arial" font-size="12">ORB, SIFT, etc.</text>
+
+  <!-- Pose Estimation -->
+  <rect x="550" y="80" width="150" height="80" fill="#fff3e0" stroke="#f57c00" stroke-width="2" rx="10"/>
+  <text x="625" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Pose Estimation</text>
+  <text x="625" y="135" text-anchor="middle" font-family="Arial" font-size="12">6DOF Tracking</text>
+
+  <!-- Map Building -->
+  <rect x="100" y="200" width="200" height="80" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="10"/>
+  <text x="200" y="240" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Map Building</text>
+  <text x="200" y="255" text-anchor="middle" font-family="Arial" font-size="12">3D Reconstruction</text>
+
+  <!-- Localization -->
+  <rect x="350" y="200" width="200" height="80" fill="#e0f7fa" stroke="#006064" stroke-width="2" rx="10"/>
+  <text x="450" y="240" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Localization</text>
+  <text x="450" y="255" text-anchor="middle" font-family="Arial" font-size="12">Position Tracking</text>
+
+  <!-- Navigation Stack -->
+  <rect x="600" y="200" width="150" height="80" fill="#f1f8e9" stroke="#689f38" stroke-width="2" rx="10"/>
+  <text x="675" y="240" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Navigation</text>
+  <text x="675" y="255" text-anchor="middle" font-family="Arial" font-size="12">Path Planning</text>
+
+  <!-- Robot Control -->
+  <rect x="250" y="320" width="300" height="80" fill="#ffebee" stroke="#d32f2f" stroke-width="2" rx="10"/>
+  <text x="400" y="360" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Robot Control</text>
+  <text x="400" y="375" text-anchor="middle" font-family="Arial" font-size="12">Motion Planning & Execution</text>
+
+  <!-- Isaac ROS Components -->
+  <rect x="150" y="420" width="500" height="60" fill="#e1f5fe" stroke="#0277bd" stroke-width="2" rx="10"/>
+  <text x="400" y="455" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Isaac ROS VSLAM Components</text>
+
+  <!-- Arrows showing data flow -->
+  <line x1="250" y1="120" x2="325" y2="120" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="475" y1="120" x2="550" y2="120" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="175" y1="160" x2="200" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="160" x2="450" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="625" y1="160" x2="675" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="200" y1="280" x2="400" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="450" y1="280" x2="400" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="675" y1="280" x2="400" y2="320" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="400" x2="400" y2="420" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#000" />
+    </marker>
+  </defs>
+</svg>

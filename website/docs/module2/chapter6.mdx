@@ -1,0 +1,582 @@
+---
+title: "Integrating ROS 2 with Gazebo & Unity"
+description: Connecting ROS 2 with Gazebo and Unity for comprehensive humanoid robotics simulation
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Set up ROS 2 bridges for communication with Gazebo and Unity
+- Configure bidirectional data exchange between simulation and ROS 2
+- Implement sensor data integration from both simulators
+- Coordinate control commands across multiple simulation platforms
+- Optimize communication for real-time performance
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1 and Module 2 Chapters 1-5
+- Understand ROS 2 communication patterns (topics, services, actions)
+- Be familiar with Gazebo simulation and Unity visualization
+- Have experience with sensor and actuator interfaces in ROS 2
+
+## Introduction
+
+Integrating ROS 2 with both Gazebo and Unity provides a comprehensive simulation environment for humanoid robotics. Gazebo excels at physics simulation and sensor modeling, while Unity provides high-fidelity visualization. Combining both platforms with ROS 2 allows for realistic testing of humanoid robot algorithms with both accurate physics and photorealistic rendering.
+
+The integration architecture typically involves:
+- **Gazebo-ROS Bridge**: Handles physics simulation and sensor data
+- **Unity-ROS Bridge**: Provides high-fidelity visualization
+- **Synchronized State**: Ensures both simulators reflect the same robot state
+- **Data Exchange**: Bidirectional communication for commands and feedback
+
+This dual-simulator approach enables:
+- Physics-accurate simulation with photorealistic visualization
+- Synthetic data generation for machine learning
+- Advanced debugging and visualization capabilities
+- Validation of algorithms across different simulation paradigms
+
+## Core Concepts
+
+### Multi-Simulator Architecture
+
+The architecture for integrating both simulators includes:
+- **Master ROS 2 Node**: Coordinates between simulators
+- **Gazebo Bridge**: Handles physics and sensor simulation
+- **Unity Bridge**: Manages visualization and rendering
+- **State Synchronization**: Keeps both simulators in sync
+
+### Data Flow Patterns
+
+Key data flows in the integrated system:
+- **Commands**: From ROS 2 to both simulators (joint commands, navigation goals)
+- **Sensor Data**: From Gazebo to ROS 2 (LiDAR, cameras, IMUs)
+- **Visualization Data**: From ROS 2 to Unity (robot state, sensor overlays)
+- **State Updates**: Between simulators for synchronization
+
+### Communication Protocols
+
+Different protocols for different needs:
+- **TCP/UDP**: For high-bandwidth sensor data (images, point clouds)
+- **ROS 2 Topics**: For standard messaging (joint states, transforms)
+- **Services**: For configuration and control (spawning, deleting models)
+- **Actions**: For goal-oriented behaviors (navigation, manipulation)
+
+### Performance Considerations
+
+Balancing performance across systems:
+- **Update Rates**: Different rates for physics vs visualization
+- **Data Compression**: Reducing bandwidth for sensor streams
+- **Threading**: Separate threads for different communication channels
+- **Caching**: Storing frequently accessed data locally
+
+## Code Examples
+
+### Gazebo-ROS Bridge Node
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState, LaserScan, Image, Imu
+from geometry_msgs.msg import Twist, PoseStamped
+from nav_msgs.msg import Odometry
+from std_msgs.msg import Header
+import numpy as np
+import math
+from tf2_ros import TransformBroadcaster
+import tf_transformations
+
+
+class GazeboBridgeNode(Node):
+    """
+    Bridge node for Gazebo simulation integration with ROS 2.
+    """
+
+    def __init__(self):
+        super().__init__('gazebo_bridge_node')
+
+        # Publishers for Gazebo simulation data
+        self.joint_state_pub = self.create_publisher(JointState, '/joint_states', 10)
+        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.imu_pub = self.create_publisher(Imu, '/imu/data', 10)
+
+        # Subscribers for commands to Gazebo
+        self.joint_cmd_sub = self.create_subscription(
+            JointState,
+            '/joint_commands',
+            self.joint_command_callback,
+            10
+        )
+
+        # Timer for publishing simulation state
+        self.sim_timer = self.create_timer(0.01, self.publish_simulation_state)  # 100Hz
+
+        # TF broadcaster for transforms
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        # Internal state
+        self.current_joint_positions = {}
+        self.current_joint_velocities = {}
+        self.current_joint_efforts = {}
+        self.robot_pose = {'x': 0.0, 'y': 0.0, 'theta': 0.0}
+        self.robot_twist = {'linear': {'x': 0.0}, 'angular': {'z': 0.0}}
+
+        # Robot parameters
+        self.wheel_separation = 0.4  # For mobile base simulation
+        self.wheel_radius = 0.1
+
+        self.get_logger().info('Gazebo Bridge Node initialized')
+
+    def joint_command_callback(self, msg):
+        """Handle incoming joint commands and forward to Gazebo."""
+        for i, name in enumerate(msg.name):
+            if i < len(msg.position):
+                self.current_joint_positions[name] = msg.position[i]
+            if i < len(msg.velocity):
+                self.current_joint_velocities[name] = msg.velocity[i]
+            if i < len(msg.effort):
+                self.current_joint_efforts[name] = msg.effort[i]
+
+        # In a real implementation, this would send commands to Gazebo
+        self.get_logger().debug(f'Received joint commands for {len(msg.name)} joints')
+
+    def publish_simulation_state(self):
+        """Publish current simulation state to ROS 2."""
+        # Publish joint states
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.header.frame_id = 'base_link'
+
+        for joint_name, position in self.current_joint_positions.items():
+            joint_state_msg.name.append(joint_name)
+            joint_state_msg.position.append(position)
+
+            if joint_name in self.current_joint_velocities:
+                joint_state_msg.velocity.append(self.current_joint_velocities[joint_name])
+            else:
+                joint_state_msg.velocity.append(0.0)
+
+            if joint_name in self.current_joint_efforts:
+                joint_state_msg.effort.append(self.current_joint_efforts[joint_name])
+            else:
+                joint_state_msg.effort.append(0.0)
+
+        self.joint_state_pub.publish(joint_state_msg)
+
+        # Publish odometry (if applicable for mobile base)
+        odom_msg = Odometry()
+        odom_msg.header.stamp = self.get_clock().now().to_msg()
+        odom_msg.header.frame_id = 'odom'
+        odom_msg.child_frame_id = 'base_footprint'
+
+        # Populate with current pose and twist
+        odom_msg.pose.pose.position.x = self.robot_pose['x']
+        odom_msg.pose.pose.position.y = self.robot_pose['y']
+        odom_msg.pose.pose.orientation.z = math.sin(self.robot_pose['theta'] / 2.0)
+        odom_msg.pose.pose.orientation.w = math.cos(self.robot_pose['theta'] / 2.0)
+
+        odom_msg.twist.twist.linear.x = self.robot_twist['linear']['x']
+        odom_msg.twist.twist.angular.z = self.robot_twist['angular']['z']
+
+        self.odom_pub.publish(odom_msg)
+
+        # Broadcast transforms
+        self.broadcast_transforms()
+
+    def broadcast_transforms(self):
+        """Broadcast TF transforms for robot links."""
+        # Example: broadcast base footprint transform
+        from geometry_msgs.msg import TransformStamped
+
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_footprint'
+
+        t.transform.translation.x = self.robot_pose['x']
+        t.transform.translation.y = self.robot_pose['y']
+        t.transform.translation.z = 0.0
+        t.transform.rotation.z = math.sin(self.robot_pose['theta'] / 2.0)
+        t.transform.rotation.w = math.cos(self.robot_pose['theta'] / 2.0)
+
+        self.tf_broadcaster.sendTransform(t)
+
+
+class UnityBridgeNode(Node):
+    """
+    Bridge node for Unity visualization integration with ROS 2.
+    """
+
+    def __init__(self):
+        super().__init__('unity_bridge_node')
+
+        # Publishers for Unity visualization commands
+        self.unity_joint_pub = self.create_publisher(JointState, '/Unity/joint_states', 10)
+        self.unity_transform_pub = self.create_publisher(PoseStamped, '/Unity/transforms', 10)
+
+        # Subscribers for Unity interaction
+        self.unity_interaction_sub = self.create_subscription(
+            String,
+            '/Unity/interaction',
+            self.unity_interaction_callback,
+            10
+        )
+
+        # Timer for Unity visualization updates
+        self.unity_timer = self.create_timer(0.033, self.update_unity_visualization)  # ~30Hz
+
+        # Internal state
+        self.unity_connection = None
+        self.visual_robot_state = {}  # State for Unity visualization only
+        self.last_update_time = self.get_clock().now()
+
+        self.get_logger().info('Unity Bridge Node initialized')
+
+    def unity_interaction_callback(self, msg):
+        """Handle interactions from Unity."""
+        try:
+            interaction_data = json.loads(msg.data)
+            interaction_type = interaction_data.get('type', '')
+
+            if interaction_type == 'click_on_robot_part':
+                part_name = interaction_data.get('part', '')
+                self.get_logger().info(f'Clicked on robot part: {part_name}')
+                # Could trigger highlighting or inspection of that part
+                self.highlight_robot_part(part_name)
+
+        except json.JSONDecodeError:
+            self.get_logger().error('Invalid JSON in Unity interaction message')
+
+    def update_unity_visualization(self):
+        """Update Unity visualization with current robot state."""
+        # Get current robot state from ROS topics
+        current_state = self.get_current_robot_state()
+
+        # Update Unity visualization state
+        self.visual_robot_state = current_state
+
+        # In a real implementation, this would send data to Unity via TCP/websocket
+        self.send_to_unity(current_state)
+
+    def get_current_robot_state(self):
+        """Get current robot state from ROS topics."""
+        # In practice, this would subscribe to joint states and other topics
+        # For this example, we'll return a mock state
+        return {
+            'timestamp': self.get_clock().now().nanoseconds / 1e9,
+            'joint_positions': dict(self.current_joint_positions),
+            'robot_pose': dict(self.robot_pose),
+            'highlighted_parts': []
+        }
+
+    def send_to_unity(self, state_data):
+        """Send state data to Unity."""
+        if self.unity_connection:
+            try:
+                json_data = json.dumps(state_data).encode('utf-8')
+                self.unity_connection.send(json_data + b'/n')
+            except Exception as e:
+                self.get_logger().warn(f'Failed to send data to Unity: {e}')
+
+    def highlight_robot_part(self, part_name):
+        """Highlight a specific robot part in Unity."""
+        highlight_msg = String()
+        highlight_msg.data = json.dumps({
+            'command': 'highlight_part',
+            'part': part_name,
+            'color': [1.0, 0.0, 0.0, 1.0]  # Red highlight
+        })
+        self.unity_command_pub.publish(highlight_msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    gazebo_bridge = GazeboBridgeNode()
+    unity_bridge = UnityBridgeNode()
+
+    # Use MultiThreadedExecutor to handle both nodes
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(gazebo_bridge)
+    executor.add_node(unity_bridge)
+
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        gazebo_bridge.destroy_node()
+        unity_bridge.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Synchronization Manager
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from geometry_msgs.msg import PoseStamped, TransformStamped
+from std_msgs.msg import String, Bool
+from tf2_ros import TransformListener, Buffer
+import time
+import threading
+from collections import deque
+
+
+class SimulationSynchronizer(Node):
+    """
+    Synchronizes state between Gazebo and Unity simulators.
+    """
+
+    def __init__(self):
+        super().__init__('simulation_synchronizer')
+
+        # Subscriptions for state from both simulators
+        self.gazebo_joint_sub = self.create_subscription(
+            JointState,
+            '/Gazebo/joint_states',
+            self.gazebo_joint_callback,
+            10
+        )
+
+        self.unity_joint_sub = self.create_subscription(
+            JointState,
+            '/Unity/joint_states',
+            self.unity_joint_callback,
+            10
+        )
+
+        # Publishers for synchronization commands
+        self.gazebo_sync_pub = self.create_publisher(
+            JointState,
+            '/Gazebo/sync_commands',
+            10
+        )
+
+        self.unity_sync_pub = self.create_publisher(
+            JointState,
+            '/Unity/sync_commands',
+            10
+        )
+
+        # Status publishers
+        self.sync_status_pub = self.create_publisher(
+            String,
+            '/simulation_sync_status',
+            10
+        )
+
+        # Timer for synchronization checks
+        self.sync_timer = self.create_timer(0.1, self.check_synchronization)  # 10Hz
+
+        # Internal state
+        self.gazebo_joint_state = JointState()
+        self.unity_joint_state = JointState()
+        self.last_sync_time = self.get_clock().now()
+        self.sync_enabled = True
+        self.state_buffer = deque(maxlen=10)  # Buffer for state history
+
+        # Synchronization parameters
+        self.max_sync_delay = 0.1  # Maximum allowed delay in seconds
+        self.tolerance = 0.01      # Position tolerance for synchronization
+
+        self.get_logger().info('Simulation Synchronizer initialized')
+
+    def gazebo_joint_callback(self, msg):
+        """Receive joint state from Gazebo."""
+        self.gazebo_joint_state = msg
+        self.update_state_buffer(msg)
+
+    def unity_joint_callback(self, msg):
+        """Receive joint state from Unity."""
+        self.unity_joint_state = msg
+
+    def update_state_buffer(self, joint_state):
+        """Update state buffer with latest joint state."""
+        timestamp = self.get_clock().now().nanoseconds / 1e9
+        self.state_buffer.append({
+            'timestamp': timestamp,
+            'joint_state': joint_state
+        })
+
+    def check_synchronization(self):
+        """Check synchronization between simulators."""
+        if not self.sync_enabled:
+            return
+
+        # Calculate time difference between simulators
+        gazebo_time = self.gazebo_joint_state.header.stamp.sec + /
+                      self.gazebo_joint_state.header.stamp.nanosec / 1e9
+        unity_time = self.unity_joint_state.header.stamp.sec + /
+                     self.unity_joint_state.header.stamp.nanosec / 1e9
+
+        time_diff = abs(gazebo_time - unity_time)
+
+        if time_diff > self.max_sync_delay:
+            self.get_logger().warn(f'Synchronization delay: {time_diff:.3f}s')
+            self.resynchronize_states()
+
+        # Check position differences
+        pos_diff = self.calculate_position_difference()
+        if pos_diff > self.tolerance:
+            self.get_logger().info(f'Position difference: {pos_diff:.3f}, resynchronizing')
+            self.resynchronize_states()
+
+    def calculate_position_difference(self):
+        """Calculate average position difference between simulators."""
+        if not self.gazebo_joint_state.name or not self.unity_joint_state.name:
+            return 0.0
+
+        total_diff = 0.0
+        matched_joints = 0
+
+        for i, gazebo_name in enumerate(self.gazebo_joint_state.name):
+            if i < len(self.gazebo_joint_state.position):
+                for j, unity_name in enumerate(self.unity_joint_state.name):
+                    if j < len(self.unity_joint_state.position) and unity_name == gazebo_name:
+                        pos_diff = abs(
+                            self.gazebo_joint_state.position[i] -
+                            self.unity_joint_state.position[j]
+                        )
+                        total_diff += pos_diff
+                        matched_joints += 1
+                        break
+
+        if matched_joints > 0:
+            return total_diff / matched_joints
+        else:
+            return 0.0
+
+    def resynchronize_states(self):
+        """Resynchronize states between simulators."""
+        # Send Gazebo state to Unity
+        sync_msg = JointState()
+        sync_msg.header.stamp = self.get_clock().now().to_msg()
+        sync_msg.header.frame_id = 'base_link'
+
+        # Copy positions from Gazebo to Unity
+        for i, name in enumerate(self.gazebo_joint_state.name):
+            if i < len(self.gazebo_joint_state.position):
+                sync_msg.name.append(name)
+                sync_msg.position.append(self.gazebo_joint_state.position[i])
+
+        # Publish to both simulators to ensure they match
+        self.gazebo_sync_pub.publish(sync_msg)
+        self.unity_sync_pub.publish(sync_msg)
+
+        # Update status
+        status_msg = String()
+        status_msg.data = f'Resynchronized at {sync_msg.header.stamp.sec}.{sync_msg.header.stamp.nanosec}'
+        self.sync_status_pub.publish(status_msg)
+
+        self.get_logger().info(f'Resynchronized {len(sync_msg.name)} joints')
+
+    def enable_synchronization(self, enable=True):
+        """Enable or disable synchronization."""
+        self.sync_enabled = enable
+        self.get_logger().info(f'Synchronization {"enabled" if enable else "disabled"}')
+
+    def get_sync_status(self):
+        """Get current synchronization status."""
+        return {
+            'enabled': self.sync_enabled,
+            'last_sync_time': self.last_sync_time,
+            'time_difference': self.calculate_time_difference(),
+            'position_difference': self.calculate_position_difference()
+        }
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    synchronizer = SimulationSynchronizer()
+
+    try:
+        rclpy.spin(synchronizer)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        synchronizer.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+## Diagrams and Visuals
+
+![ROS 2 Gazebo Unity Integration](/img/diagrams/ROS 2-Gazebo-Unity-integration.png)
+
+*Figure 1: Architecture diagram showing the integration between ROS 2, Gazebo physics simulation, and Unity visualization with bidirectional data flow.*
+
+## Hands-On Lab
+
+### Exercise 1: Basic Integration Setup
+Set up the basic integration between ROS 2, Gazebo, and Unity:
+
+1. Create a launch file that starts all three components
+2. Implement basic joint state synchronization
+3. Test command flow from ROS 2 to both simulators
+4. Verify sensor data flow from Gazebo to ROS 2
+5. Validate visualization updates in Unity
+
+### Exercise 2: Advanced Synchronization
+Implement advanced synchronization features:
+
+1. Add timestamp-based synchronization to handle timing differences
+2. Implement position tolerance checking to detect desynchronization
+3. Create a feedback mechanism for automatic resynchronization
+4. Add logging and monitoring for synchronization quality
+5. Test with complex humanoid movements
+
+### Exercise 3: Performance Optimization
+Optimize the integration for real-time performance:
+
+1. Implement data compression for high-bandwidth sensor streams
+2. Use threading to separate different communication channels
+3. Add caching mechanisms for frequently accessed data
+4. Profile and optimize communication rates
+5. Test scalability with multiple robots
+
+## Troubleshooting
+
+Common integration issues and solutions:
+
+- **Issue: Desynchronization between simulators**: Implement robust synchronization mechanisms with tolerance checking and automatic resynchronization.
+- **Issue: High latency in communication**: Optimize communication protocols, use appropriate update rates, and implement data compression where needed.
+- **Issue: Joint state mismatches**: Verify joint names match exactly between URDF, Gazebo, and Unity, and check for proper coordinate system conversions.
+- **Issue: TF frame inconsistencies**: Ensure proper TF tree setup with consistent frame naming across all systems.
+
+## Summary
+
+This chapter covered the integration of ROS 2 with both Gazebo and Unity simulation environments. We explored the architecture for bidirectional communication, synchronization mechanisms, and performance optimization techniques. Proper integration allows for the best of both simulation worlds: accurate physics from Gazebo and high-fidelity visualization from Unity.
+
+## Further Reading
+
+- Gazebo-ROS 2 Integration Guide
+- Unity-ROS Bridge Documentation
+- Multi-Simulator Coordination Patterns
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement a fault-tolerant bridge that can handle disconnections gracefully.
+2. Create a diagnostic node that monitors the health of the simulation integration.
+3. Design a system for switching between simulators dynamically based on the task requirements.
+
+<!-- Optional: Add custom components for interactive elements -->

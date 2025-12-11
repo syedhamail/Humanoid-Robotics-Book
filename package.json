@@ -1,0 +1,19 @@
+
+{
+  "name": "my-humanoid-robotics-book",
+  "version": "1.0.0",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/syedhamail/my-humanoid-robotics-book.git"
+  },
+  "workspaces": [
+    "website"
+  ],
+  "scripts": {
+    "start": "npm run start --workspace=website",
+    "build": "npm run build --workspace=website",
+    "serve": "npm run serve --workspace=website",
+    "clear": "npm run clear --workspace=website"
+  }
+}

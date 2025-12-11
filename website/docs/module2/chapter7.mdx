@@ -1,0 +1,852 @@
+---
+title: "Lab: Build a Digital Twin of a Humanoid & Test Basic Motions"
+description: Practical lab exercise to create a complete digital twin and test basic humanoid robot motions
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this lab, you will be able to:
+- Create a complete digital twin environment with Gazebo and Unity
+- Integrate ROS 2 with both simulation platforms
+- Implement basic motion control for a humanoid robot
+- Test locomotion and manipulation capabilities
+- Validate the simulation-to-reality transfer potential
+
+## Prerequisites
+
+Before starting this lab, you should:
+- Have completed Module 1 and Module 2 Chapters 1-6
+- Have Gazebo and Unity properly installed and configured
+- Be familiar with ROS 2 launch systems and parameter management
+- Understand URDF and robot kinematics concepts
+
+## Introduction
+
+This lab brings together all the concepts from Module 2 to create a complete digital twin of a humanoid robot. A digital twin is a virtual replica of a physical system that can be used for testing, validation, and development before deployment on real hardware.
+
+In this lab, you will:
+- Set up a complete simulation environment with physics and visualization
+- Create a humanoid robot model with appropriate sensors
+- Implement basic motion control capabilities
+- Test various movements and behaviors
+- Validate the simulation pipeline
+
+The digital twin will include:
+- Physics simulation in Gazebo with realistic dynamics
+- High-fidelity visualization in Unity
+- Complete sensor suite (LiDAR, cameras, IMUs)
+- ROS 2 control interfaces for commanding movements
+
+## Lab Setup
+
+### Required Components
+
+For this lab, you'll need:
+- ROS 2 Humble/Iron installed
+- Gazebo Garden/Fortress
+- Unity Hub with appropriate version
+- Basic humanoid robot URDF model
+- Appropriate ROS 2 packages for control and perception
+
+### Directory Structure
+
+```
+examples/module2_lab/digital_twin/
+├── launch/
+│   ├── digital_twin.launch.py
+│   └── robot_control.launch.py
+├── worlds/
+│   └── humanoid_world.sdf
+├── models/
+│   ├── humanoid_robot.URDF
+│   └── humanoid_sensors.sdf
+├── config/
+│   ├── gazebo_physics.yaml
+│   ├── robot_control.yaml
+│   └── unity_visualization.yaml
+├── scripts/
+│   ├── motion_controller.py
+│   └── sensor_processor.py
+└── rviz/
+    └── digital_twin.rviz
+```
+
+### Installation and Dependencies
+
+```bash
+# Install required ROS 2 packages
+sudo apt update
+sudo apt install ros-humble-Gazebo-ros-pkgs
+sudo apt install ros-humble-ROS 2-control
+sudo apt install ros-humble-ROS 2-controllers
+sudo apt install ros-humble-xacro
+
+# Install Unity ROS TCP Connector (if using Unity-ROS bridge)
+# Download from: https://github.com/Unity-Technologies/ROS-TCP-Connector
+```
+
+## Implementation Steps
+
+### Step 1: Create the Robot Model
+
+First, create a humanoid robot URDF with basic kinematic structure:
+
+```xml
+<?xml version="1.0"?>
+<robot name="digital_twin_humanoid" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Include common properties -->
+  <xacro:property name="M_PI" value="3.1415926535897931" />
+
+  <!-- Base/Fixed link -->
+  <link name="base_link">
+    <inertial>
+      <mass value="10.0" />
+      <origin xyz="0 0 0.5" />
+      <inertia ixx="1.0" ixy="0.0" ixz="0.0" iyy="1.0" iyz="0.0" izz="1.0" />
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 0.5" />
+      <geometry>
+        <box size="0.3 0.3 1.0" />
+      </geometry>
+      <material name="blue">
+        <color rgba="0 0 1 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 0.5" />
+      <geometry>
+        <box size="0.3 0.3 1.0" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Head -->
+  <joint name="neck_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="head" />
+    <origin xyz="0 0 1.0" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="${-M_PI/4}" upper="${M_PI/4}" effort="10" velocity="2.0" />
+  </joint>
+
+  <link name="head">
+    <inertial>
+      <mass value="2.0" />
+      <origin xyz="0 0 0" />
+      <inertia ixx="0.05" ixy="0.0" ixz="0.0" iyy="0.05" iyz="0.0" izz="0.05" />
+    </inertial>
+
+    <visual>
+      <geometry>
+        <sphere radius="0.15" />
+      </geometry>
+      <material name="white">
+        <color rgba="1 1 1 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <geometry>
+        <sphere radius="0.15" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Left Arm -->
+  <joint name="left_shoulder_pan_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="left_upper_arm" />
+    <origin xyz="0.15 0.15 0.8" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="20" velocity="2.0" />
+  </joint>
+
+  <link name="left_upper_arm">
+    <inertial>
+      <mass value="3.0" />
+      <origin xyz="0 0 -0.15" />
+      <inertia ixx="0.05" ixy="0.0" ixz="0.0" iyy="0.05" iyz="0.0" izz="0.01" />
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.15" />
+      <geometry>
+        <capsule radius="0.06" length="0.3" />
+      </geometry>
+      <material name="red">
+        <color rgba="1 0 0 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.15" />
+      <geometry>
+        <capsule radius="0.06" length="0.3" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="left_elbow_joint" type="revolute">
+    <parent link="left_upper_arm" />
+    <child link="left_lower_arm" />
+    <origin xyz="0 0 -0.3" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="15" velocity="2.0" />
+  </joint>
+
+  <link name="left_lower_arm">
+    <inertial>
+      <mass value="2.0" />
+      <origin xyz="0 0 -0.1" />
+      <inertia ixx="0.02" ixy="0.0" ixz="0.0" iyy="0.02" iyz="0.0" izz="0.005" />
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.1" />
+      <geometry>
+        <capsule radius="0.05" length="0.2" />
+      </geometry>
+      <material name="green">
+        <color rgba="0 1 0 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.1" />
+      <geometry>
+        <capsule radius="0.05" length="0.2" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Right Arm (mirror of left) -->
+  <joint name="right_shoulder_pan_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="right_upper_arm" />
+    <origin xyz="0.15 -0.15 0.8" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="20" velocity="2.0" />
+  </joint>
+
+  <link name="right_upper_arm">
+    <inertial>
+      <mass value="3.0" />
+      <origin xyz="0 0 -0.15" />
+      <inertia ixx="0.05" ixy="0.0" ixz="0.0" iyy="0.05" iyz="0.0" izz="0.01" />
+    </inertial>
+  </link>
+
+  <joint name="right_elbow_joint" type="revolute">
+    <parent link="right_upper_arm" />
+    <child link="right_lower_arm" />
+    <origin xyz="0 0 -0.3" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="15" velocity="2.0" />
+  </joint>
+
+  <link name="right_lower_arm">
+    <inertial>
+      <mass value="2.0" />
+      <origin xyz="0 0 -0.1" />
+      <inertia ixx="0.02" ixy="0.0" ixz="0.0" iyy="0.02" iyz="0.0" izz="0.005" />
+    </inertial>
+  </link>
+
+  <!-- Left Leg -->
+  <joint name="left_hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="left_thigh" />
+    <origin xyz="-0.05 0.1 -0.5" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="50" velocity="2.0" />
+  </joint>
+
+  <link name="left_thigh">
+    <inertial>
+      <mass value="5.0" />
+      <origin xyz="0 0 -0.2" />
+      <inertia ixx="0.1" ixy="0.0" ixz="0.0" iyy="0.1" iyz="0.0" izz="0.02" />
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.2" />
+      <geometry>
+        <capsule radius="0.08" length="0.4" />
+      </geometry>
+      <material name="yellow">
+        <color rgba="1 1 0 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.2" />
+      <geometry>
+        <capsule radius="0.08" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="left_knee_joint" type="revolute">
+    <parent link="left_thigh" />
+    <child link="left_shin" />
+    <origin xyz="0 0 -0.4" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="${M_PI/2}" effort="40" velocity="2.0" />
+  </joint>
+
+  <link name="left_shin">
+    <inertial>
+      <mass value="4.0" />
+      <origin xyz="0 0 -0.2" />
+      <inertia ixx="0.08" ixy="0.0" ixz="0.0" iyy="0.08" iyz="0.0" izz="0.01" />
+    </inertial>
+
+    <visual>
+      <origin xyz="0 0 -0.2" />
+      <geometry>
+        <capsule radius="0.07" length="0.4" />
+      </geometry>
+      <material name="orange">
+        <color rgba="1 0.6 0 0.8" />
+      </material>
+    </visual>
+
+    <collision>
+      <origin xyz="0 0 -0.2" />
+      <geometry>
+        <capsule radius="0.07" length="0.4" />
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Right Leg (mirror of left) -->
+  <joint name="right_hip_joint" type="revolute">
+    <parent link="base_link" />
+    <child link="right_thigh" />
+    <origin xyz="-0.05 -0.1 -0.5" rpy="0 0 0" />
+    <axis xyz="0 0 1" />
+    <limit lower="${-M_PI/2}" upper="${M_PI/2}" effort="50" velocity="2.0" />
+  </joint>
+
+  <link name="right_thigh">
+    <inertial>
+      <mass value="5.0" />
+      <origin xyz="0 0 -0.2" />
+      <inertia ixx="0.1" ixy="0.0" ixz="0.0" iyy="0.1" iyz="0.0" izz="0.02" />
+    </inertial>
+  </link>
+
+  <joint name="right_knee_joint" type="revolute">
+    <parent link="right_thigh" />
+    <child link="right_shin" />
+    <origin xyz="0 0 -0.4" rpy="0 0 0" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="${M_PI/2}" effort="40" velocity="2.0" />
+  </joint>
+
+  <link name="right_shin">
+    <inertial>
+      <mass value="4.0" />
+      <origin xyz="0 0 -0.2" />
+      <inertia ixx="0.08" ixy="0.0" ixz="0.0" iyy="0.08" iyz="0.0" izz="0.01" />
+    </inertial>
+  </link>
+
+  <!-- Gazebo plugins -->
+  <Gazebo>
+    <plugin name="gazebo_ros_control" filename="libgazebo_ros2_control.so">
+      <robot_namespace>/humanoid</robot_namespace>
+      <robot_param>/robot_description</robot_param>
+    </plugin>
+  </Gazebo>
+
+  <!-- Sensors -->
+  <Gazebo reference="head">
+    <sensor name="camera" type="camera">
+      <pose>0.1 0 0 0 0 0</pose>
+      <camera>
+        <horizontal_fov>1.047</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <frame_name>head_camera_optical_frame</frame_name>
+      </plugin>
+    </sensor>
+  </Gazebo>
+
+</robot>
+```
+
+### Step 2: Create the World File
+
+```xml
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="humanoid_digital_twin_world">
+    <!-- Physics engine -->
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <gravity>0 0 -9.8</gravity>
+    </physics>
+
+    <!-- Lighting -->
+    <light name="sun" type="directional">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.4 0.2 -1.0</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <model name="ground_plane" static="true">
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>1.0</mu>
+                <mu2>1.0</mu2>
+              </ode>
+            </friction>
+          </surface>
+        </collision>
+
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.7 0.7 0.7 1</ambient>
+            <diffuse>0.7 0.7 0.7 1</diffuse>
+            <specular>0.7 0.7 0.7 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Sample obstacles for testing -->
+    <model name="obstacle_1" static="true">
+      <pose>2 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box>
+              <size>0.5 0.5 1.0</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>0.5 0.5 1.0</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 0.5 1</ambient>
+            <diffuse>0.5 0.5 0.5 1</diffuse>
+          </material>
+        </visual>
+        <inertial>
+          <mass>1.0</mass>
+          <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1" />
+        </inertial>
+      </link>
+    </model>
+
+    <!-- Include the humanoid robot -->
+    <include>
+      <uri>model://humanoid_robot</uri>
+      <pose>0 0 1.0 0 0 0</pose>
+    </include>
+
+    <!-- Plugins for ROS 2 integration -->
+    <plugin name="gazebo_ros_init" filename="libgazebo_ros_init.so">
+      <ros>
+        <namespace>/Gazebo</namespace>
+      </ros>
+      <update_rate>1000</update_rate>
+    </plugin>
+
+  </world>
+</sdf>
+```
+
+### Step 3: Create Motion Controller Node
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Header
+from builtin_interfaces.msg import Time
+import math
+import time
+from collections import OrderedDict
+
+
+class HumanoidMotionController(Node):
+    """
+    Controller for basic humanoid robot motions in digital twin environment.
+    """
+
+    def __init__(self):
+        super().__init__('humanoid_motion_controller')
+
+        # Publisher for joint commands
+        self.joint_cmd_pub = self.create_publisher(JointState, '/joint_commands', 10)
+
+        # Timer for motion control
+        self.motion_timer = self.create_timer(0.02, self.execute_motion_sequence)  # 50Hz
+
+        # Motion sequence parameters
+        self.motion_phase = 0
+        self.motion_cycle = 0
+        self.sequence_start_time = self.get_clock().now()
+
+        # Define joint names for the humanoid
+        self.joint_names = [
+            'left_shoulder_pan_joint', 'left_elbow_joint',
+            'right_shoulder_pan_joint', 'right_elbow_joint',
+            'left_hip_joint', 'left_knee_joint',
+            'right_hip_joint', 'right_knee_joint',
+            'neck_joint'
+        ]
+
+        # Motion parameters
+        self.walking_freq = 0.5  # Hz
+        self.arm_swing_amplitude = 0.3  # radians
+        self.leg_swing_amplitude = 0.2  # radians
+
+        self.get_logger().info('Humanoid Motion Controller initialized')
+
+    def execute_motion_sequence(self):
+        """Execute a sequence of basic humanoid motions."""
+        # Calculate time-based motion parameters
+        elapsed = (self.get_clock().now() - self.sequence_start_time).nanoseconds / 1e9
+
+        # Cycle through different motion patterns
+        cycle_duration = 10.0  # seconds per motion cycle
+        cycle_phase = (elapsed % cycle_duration) / cycle_duration
+
+        # Create joint state message
+        joint_state_msg = JointState()
+        joint_state_msg.header.stamp = self.get_clock().now().to_msg()
+        joint_state_msg.name = self.joint_names[:]
+
+        # Initialize positions
+        positions = [0.0] * len(self.joint_names)
+
+        # Motion 1: Standing wave (first 2.5 seconds of each cycle)
+        if cycle_phase < 0.25:
+            self.execute_standing_wave(positions, elapsed)
+        # Motion 2: Arm swinging (next 2.5 seconds)
+        elif cycle_phase < 0.5:
+            self.execute_arm_swing(positions, elapsed)
+        # Motion 3: Simple walking motion (next 2.5 seconds)
+        elif cycle_phase < 0.75:
+            self.execute_simple_walk(positions, elapsed)
+        # Motion 4: Combined motion (final 2.5 seconds)
+        else:
+            self.execute_combined_motion(positions, elapsed)
+
+        joint_state_msg.position = positions
+        self.joint_cmd_pub.publish(joint_state_msg)
+
+    def execute_standing_wave(self, positions, elapsed):
+        """Execute a standing wave motion with arms."""
+        wave_freq = 0.5  # Hz
+
+        # Left arm wave
+        positions[0] = math.sin(elapsed * 2 * math.pi * wave_freq) * self.arm_swing_amplitude  # Shoulder pan
+        positions[1] = math.cos(elapsed * 2 * math.pi * wave_freq) * (self.arm_swing_amplitude / 2)  # Elbow
+
+        # Right arm wave (opposite phase)
+        positions[2] = math.sin(elapsed * 2 * math.pi * wave_freq + math.pi) * self.arm_swing_amplitude  # Shoulder pan
+        positions[3] = math.cos(elapsed * 2 * math.pi * wave_freq + math.pi) * (self.arm_swing_amplitude / 2)  # Elbow
+
+    def execute_arm_swing(self, positions, elapsed):
+        """Execute coordinated arm swinging motion."""
+        swing_freq = self.walking_freq
+
+        # Coordinated arm swing
+        left_arm_pos = math.sin(elapsed * 2 * math.pi * swing_freq) * self.arm_swing_amplitude
+        right_arm_pos = math.sin(elapsed * 2 * math.pi * swing_freq + math.pi) * self.arm_swing_amplitude
+
+        positions[0] = left_arm_pos  # Left shoulder
+        positions[2] = right_arm_pos  # Right shoulder
+
+        # Elbow coordination
+        positions[1] = -abs(left_arm_pos) * 0.5  # Left elbow
+        positions[3] = -abs(right_arm_pos) * 0.5  # Right elbow
+
+    def execute_simple_walk(self, positions, elapsed):
+        """Execute a simple walking motion pattern."""
+        walk_freq = self.walking_freq
+
+        # Leg swinging for walking simulation
+        left_leg_pos = math.sin(elapsed * 2 * math.pi * walk_freq) * self.leg_swing_amplitude
+        right_leg_pos = math.sin(elapsed * 2 * math.pi * walk_freq + math.pi) * self.leg_swing_amplitude
+
+        positions[4] = left_leg_pos  # Left hip
+        positions[5] = abs(left_leg_pos) * 0.7  # Left knee (partial bend)
+        positions[6] = right_leg_pos  # Right hip
+        positions[7] = abs(right_leg_pos) * 0.7  # Right knee (partial bend)
+
+        # Counterbalance with arms
+        positions[0] = -right_leg_pos * 0.5  # Left arm counterbalance
+        positions[2] = -left_leg_pos * 0.5  # Right arm counterbalance
+
+    def execute_combined_motion(self, positions, elapsed):
+        """Execute combined upper and lower body motion."""
+        walk_freq = self.walking_freq
+
+        # Combined walking with arm swing
+        left_leg_pos = math.sin(elapsed * 2 * math.pi * walk_freq) * self.leg_swing_amplitude
+        right_leg_pos = math.sin(elapsed * 2 * math.pi * walk_freq + math.pi) * self.leg_swing_amplitude
+
+        positions[4] = left_leg_pos
+        positions[5] = abs(left_leg_pos) * 0.7
+        positions[6] = right_leg_pos
+        positions[7] = abs(right_leg_pos) * 0.7
+
+        # Coordinated arm swing
+        positions[0] = math.sin(elapsed * 2 * math.pi * walk_freq + math.pi) * self.arm_swing_amplitude
+        positions[1] = abs(positions[0]) * 0.3
+        positions[2] = math.sin(elapsed * 2 * math.pi * walk_freq) * self.arm_swing_amplitude
+        positions[3] = abs(positions[2]) * 0.3
+
+        # Gentle neck movement
+        positions[8] = math.sin(elapsed * 2 * math.pi * walk_freq * 0.3) * 0.1
+
+    def stop_motion(self):
+        """Stop all motion and return to neutral position."""
+        neutral_msg = JointState()
+        neutral_msg.header.stamp = self.get_clock().now().to_msg()
+        neutral_msg.name = self.joint_names[:]
+        neutral_msg.position = [0.0] * len(self.joint_names)
+        self.joint_cmd_pub.publish(neutral_msg)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    motion_controller = HumanoidMotionController()
+
+    try:
+        rclpy.spin(motion_controller)
+    except KeyboardInterrupt:
+        motion_controller.get_logger().info('Stopping motion controller...')
+        motion_controller.stop_motion()
+    finally:
+        motion_controller.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Step 4: Create Launch File
+
+```python
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.substitutions import TextSubstitution, PathJoinSubstitution
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
+from launch.actions import ExecuteProcess
+from ament_index_python.packages import get_package_share_directory
+import os
+
+
+def generate_launch_description():
+    """Launch the complete digital twin environment with Gazebo and Unity."""
+
+    # Arguments
+    gz_args = DeclareLaunchArgument(
+        'gz_args',
+        default_value='-r -v 4 empty.sdf',
+        description='Arguments for Gazebo simulation'
+    )
+
+    # Launch Gazebo with the humanoid world
+    gz_sim = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource([
+            PathJoinSubstitution([
+                get_package_share_directory('ros_gz_sim'),
+                'launch',
+                'gz_sim.launch.py'
+            ])
+        ]),
+        launch_arguments={'gz_args': LaunchConfiguration('gz_args')}.items()
+    )
+
+    # Spawn the humanoid robot in Gazebo
+    spawn_robot = Node(
+        package='ros_gz_sim',
+        executable='create',
+        arguments=[
+            '-name', 'humanoid_robot',
+            '-topic', 'robot_description',
+            '-x', '0', '-y', '0', '-z', '1.0'
+        ],
+        output='screen'
+    )
+
+    # Robot state publisher
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'robot_description': Command(['xacro ', PathJoinSubstitution([
+                get_package_share_directory('digital_twin_examples'),
+                'models',
+                'humanoid_robot.URDF.xacro'
+            ])])
+        }]
+    )
+
+    # Joint state publisher (for GUI control)
+    joint_state_publisher = Node(
+        package='joint_state_publisher_gui',
+        executable='joint_state_publisher_gui',
+        name='joint_state_publisher_gui',
+        condition=IfCondition(LaunchConfiguration('use_joint_gui'))
+    )
+
+    # Motion controller node
+    motion_controller = Node(
+        package='digital_twin_examples',
+        executable='motion_controller',
+        name='humanoid_motion_controller',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True
+        }]
+    )
+
+    # RViz for visualization
+    rviz = Node(
+        package='rviz2',
+        executable='rviz2',
+        name='rviz2',
+        arguments=['-d', [PathJoinSubstitution([
+            get_package_share_directory('digital_twin_examples'),
+            'rviz',
+            'digital_twin.rviz'
+        ])]],
+        condition=IfCondition(LaunchConfiguration('use_rviz'))
+    )
+
+    return LaunchDescription([
+        gz_args,
+        gz_sim,
+        spawn_robot,
+        robot_state_publisher,
+        joint_state_publisher,
+        motion_controller,
+        rviz
+    ])
+```
+
+## Testing and Validation
+
+### Exercise 1: Basic Motion Testing
+Test the basic motion capabilities of your digital twin:
+
+1. Launch the simulation environment with `ROS 2 launch digital_twin_examples digital_twin.launch.py`
+2. Observe the robot's default behavior
+3. Verify that joint states are being published correctly
+4. Test the motion controller with different motion sequences
+5. Validate that the robot behaves as expected in the physics simulation
+
+### Exercise 2: Sensor Data Validation
+Validate the sensor data from your digital twin:
+
+1. Subscribe to sensor topics (camera, IMU, etc.)
+2. Verify that sensor data is being published correctly
+3. Check that sensor data reflects the simulated environment
+4. Test sensor responses to robot movements
+5. Validate that sensor ranges and resolutions match expectations
+
+### Exercise 3: Unity Integration Testing
+If using Unity for visualization:
+
+1. Launch the Unity visualization alongside Gazebo
+2. Verify that Unity renders the robot in the same pose as Gazebo
+3. Test that movements in ROS 2 are reflected in Unity
+4. Validate that sensor visualization overlays work correctly
+5. Check synchronization between physics simulation and visualization
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Robot falls through the ground**: Check that the robot has proper collision geometry and that the ground plane is static.
+- **Issue: Joint limits exceeded**: Verify that motion controller respects joint limits defined in the URDF.
+- **Issue: Physics instability**: Adjust physics parameters like time step, solver iterations, and ERP/CFM values.
+- **Issue: Sensor data not publishing**: Check that sensor plugins are properly configured and loaded in Gazebo.
+- **Issue: Unity-ROS connection failing**: Verify TCP connection settings and ensure both systems are properly configured.
+
+## Summary
+
+This lab provided hands-on experience creating a complete digital twin environment for a humanoid robot. You learned how to integrate physics simulation, visualization, and control systems to create a comprehensive simulation environment. The digital twin approach allows for safe testing of robot behaviors before deployment on physical hardware.
+
+## Further Exploration
+
+- Implement more complex motion patterns like balancing or walking gaits
+- Add more sophisticated sensors like LiDAR or force-torque sensors
+- Integrate AI planning and control algorithms with the simulation
+- Create more complex environments with obstacles and terrain variations
+- Implement simulation-to-reality transfer techniques for your motions
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Deliverables
+
+Complete the following to finish this lab:
+1. Successfully launch the complete digital twin environment
+2. Demonstrate basic motion capabilities (at least 3 different motion patterns)
+3. Validate sensor data publication from the simulation
+4. Document any issues encountered and how they were resolved
+5. Create a short video or screenshots showing the robot performing different motions
+
+<!-- Optional: Add custom components for interactive elements -->

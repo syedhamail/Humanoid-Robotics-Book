@@ -1,0 +1,49 @@
+<svg width="800" height="500" xmlns="http://www.w3.org/2000/svg">
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">NVIDIA Isaac Sim Architecture</text>
+
+  <!-- Omniverse Core -->
+  <rect x="50" y="80" width="200" height="100" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="10"/>
+  <text x="150" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Omniverse Core</text>
+  <text x="150" y="135" text-anchor="middle" font-family="Arial" font-size="12">Nucleus, USD, Kit</text>
+
+  <!-- PhysX Physics -->
+  <rect x="300" y="80" width="200" height="100" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="400" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">PhysX Physics</text>
+  <text x="400" y="135" text-anchor="middle" font-family="Arial" font-size="12">High-fidelity Physics</text>
+
+  <!-- RTX Rendering -->
+  <rect x="550" y="80" width="200" height="100" fill="#fff3e0" stroke="#f57c00" stroke-width="2" rx="10"/>
+  <text x="650" y="120" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">RTX Rendering</text>
+  <text x="650" y="135" text-anchor="middle" font-family="Arial" font-size="12">Photorealistic Graphics</text>
+
+  <!-- Isaac ROS Bridge -->
+  <rect x="100" y="220" width="600" height="80" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="10"/>
+  <text x="400" y="250" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Isaac ROS Bridge</text>
+  <text x="400" y="265" text-anchor="middle" font-family="Arial" font-size="12">ROS 2 Interface for Robotics Workflows</text>
+
+  <!-- Perception Stack -->
+  <rect x="150" y="340" width="500" height="60" fill="#e0f7fa" stroke="#006064" stroke-width="2" rx="10"/>
+  <text x="400" y="375" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Perception Stack (VSLAM, Detection, Segmentation)</text>
+
+  <!-- Synthetic Data Generation -->
+  <rect x="200" y="420" width="400" height="60" fill="#f1f8e9" stroke="#689f38" stroke-width="2" rx="10"/>
+  <text x="400" y="455" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Synthetic Data Generation Tools</text>
+
+  <!-- Arrows showing data flow -->
+  <line x1="250" y1="130" x2="300" y2="130" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="500" y1="130" x2="550" y2="130" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="180" x2="400" y2="220" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="300" x2="400" y2="340" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="400" x2="400" y2="420" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Labels -->
+  <text x="50" y="480" text-anchor="start" font-family="Arial" font-size="10">Omniverse Platform → Physics + Graphics → ROS Bridge → Perception → Synthetic Data</text>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#000" />
+    </marker>
+  </defs>
+</svg>

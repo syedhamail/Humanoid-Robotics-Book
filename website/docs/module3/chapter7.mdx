@@ -1,0 +1,836 @@
+---
+title: "Lab: Isaac-based Perception Pipeline with SLAM + Detection"
+description: Hands-on lab exercise integrating SLAM and object detection using Isaac Sim and Isaac ROS
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this lab, you will be able to:
+- Integrate Visual SLAM and object detection in a unified perception pipeline
+- Implement real-time semantic mapping for humanoid robots
+- Configure Isaac ROS components for perception tasks
+- Evaluate the performance of integrated perception systems
+- Troubleshoot common issues in perception pipeline integration
+
+## Prerequisites
+
+Before starting this lab, you should:
+- Have completed Module 1-6 on ROS 2, simulation, navigation, and perception
+- Understand the basics of SLAM and object detection
+- Be familiar with Isaac Sim and Isaac ROS components
+- Have experience with Python and ROS 2 development
+- Understand computer vision and machine learning concepts
+
+## Introduction
+
+This lab exercise demonstrates the integration of Visual SLAM and object detection to create a comprehensive perception pipeline for humanoid robots. The combination of geometric mapping from SLAM and semantic understanding from object detection enables robots to navigate and interact with complex environments more effectively.
+
+The lab covers:
+- Setting up Isaac ROS perception components
+- Integrating SLAM with object detection
+- Creating semantic maps that combine geometric and semantic information
+- Evaluating perception pipeline performance
+- Troubleshooting common integration issues
+
+## Lab Setup
+
+### Required Components
+
+To complete this lab, you will need:
+- NVIDIA Isaac Sim with perception components
+- Isaac ROS Visual SLAM package
+- Isaac ROS Object Detection package
+- ROS 2 Humble/Iron with vision packages
+- Compatible GPU for accelerated perception
+
+### Environment Configuration
+
+```bash
+# Source ROS 2 and Isaac Sim
+source /opt/ros/humble/setup.bash
+source /workspace/packages/deploy/humble/setup.bash
+
+# Launch Isaac Sim with perception scene
+isaac-sim --enable-isaac-ros-bridge
+```
+
+## Lab Exercises
+
+### Exercise 1: SLAM and Object Detection Integration
+
+In this exercise, you will create a perception pipeline that combines Visual SLAM with object detection.
+
+**Step 1:** Launch the Isaac Sim environment with stereo cameras and RGB camera:
+
+```python
+# Launch file for perception pipeline
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+
+def generate_launch_description():
+    return LaunchDescription([
+        # Visual SLAM node
+        Node(
+            package='isaac_ros_visual_slam',
+            executable='visual_slam_node',
+            name='visual_slam',
+            parameters=[{
+                'enable_rectified_pose': True,
+                'denoise_input_images': True,
+                'enable_debug_mode': False,
+                'rectified_images': True,
+            }],
+            remappings=[
+                ('/visual_slam/camera0/extrinsics', '/calibration/camera_extrinsics'),
+                ('/visual_slam/camera1/extrinsics', '/calibration/camera_extrinsics'),
+            ]
+        ),
+
+        # Object detection node
+        Node(
+            package='isaac_ros_detectnet',
+            executable='isaac_ros_detectnet',
+            name='detectnet',
+            parameters=[{
+                'model_name': 'ssd_mobilenet_v2_coco',
+                'input_topic': '/camera/rgb/image_rect_color',
+                'detection_topic': '/isaac_ros/detections',
+                'confidence_threshold': 0.5,
+            }]
+        ),
+
+        # Perception pipeline node (created in this lab)
+        Node(
+            package='isaac_perception_lab',
+            executable='perception_pipeline',
+            name='perception_pipeline',
+            parameters=[{
+                'detection_threshold': 0.5,
+                'tracking_enabled': True,
+            }]
+        )
+    ])
+```
+
+**Step 2:** Implement the perception pipeline that integrates SLAM and object detection:
+
+```python
+#!/usr/bin/env python3
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from sensor_msgs.msg import Image, CameraInfo
+from geometry_msgs.msg import PoseStamped, Point
+from nav_msgs.msg import Odometry, OccupancyGrid
+from visualization_msgs.msg import MarkerArray, Marker
+from object_msgs.msg import Detection2DArray, Detection2D
+
+import numpy as np
+import cv2
+from cv_bridge import CvBridge
+import message_filters
+import tf2_ros
+import tf_transformations
+
+
+class PerceptionPipelineLab(Node):
+    """
+    Lab implementation for integrating SLAM and object detection.
+    """
+
+    def __init__(self):
+        super().__init__('perception_pipeline_lab')
+
+        # Initialize CV bridge
+        self.cv_bridge = CvBridge()
+
+        # TF buffer and broadcaster
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.tf_broadcaster = tf2_ros.TransformBroadcaster(self)
+
+        # QoS profile
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Subscribe to stereo cameras for SLAM
+        self.left_image_sub = message_filters.Subscriber(
+            self, Image, '/camera/left/image_rect_color', qos_profile=qos_profile)
+        self.right_image_sub = message_filters.Subscriber(
+            self, Image, '/camera/right/image_rect_color', qos_profile=qos_profile)
+        self.left_cam_info_sub = message_filters.Subscriber(
+            self, CameraInfo, '/camera/left/camera_info', qos_profile=qos_profile)
+        self.right_cam_info_sub = message_filters.Subscriber(
+            self, CameraInfo, '/camera/right/camera_info', qos_profile=qos_profile)
+
+        # Synchronize stereo data
+        self.stereo_sync = message_filters.ApproximateTimeSynchronizer(
+            [self.left_image_sub, self.right_image_sub,
+             self.left_cam_info_sub, self.right_cam_info_sub],
+            queue_size=10,
+            slop=0.1
+        )
+        self.stereo_sync.registerCallback(self.stereo_callback)
+
+        # Subscribe to RGB camera for object detection
+        self.rgb_sub = self.create_subscription(
+            Image, '/camera/rgb/image_rect_color', self.rgb_callback, qos_profile)
+
+        # Subscribe to object detections
+        self.detection_sub = self.create_subscription(
+            Detection2DArray, '/isaac_ros/detections', self.detection_callback, 10)
+
+        # Publishers
+        self.odom_pub = self.create_publisher(Odometry, '/visual_odom', 10)
+        self.semantic_map_pub = self.create_publisher(OccupancyGrid, '/semantic_map', 10)
+        self.detection_viz_pub = self.create_publisher(MarkerArray, '/detection_markers', 10)
+        self.combined_viz_pub = self.create_publisher(Image, '/combined_viz', 10)
+
+        # Internal state
+        self.current_pose = np.eye(4)
+        self.semantic_points = []
+        self.detections = []
+        self.camera_matrix = None
+        self.processing_enabled = True
+
+        # Feature detection for SLAM
+        self.feature_detector = cv2.ORB_create(nfeatures=2000)
+        self.bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        self.prev_frame = None
+
+        # Object tracking
+        self.tracked_objects = {}
+        self.object_id_counter = 0
+
+        self.get_logger().info('Perception Pipeline Lab initialized')
+
+    def stereo_callback(self, left_msg, right_msg, left_cam_info, right_cam_info):
+        """
+        Process synchronized stereo data for SLAM.
+        """
+        if not self.processing_enabled:
+            return
+
+        try:
+            # Convert to OpenCV
+            left_cv = self.cv_bridge.imgmsg_to_cv2(left_msg, desired_encoding='bgr8')
+            right_cv = self.cv_bridge.imgmsg_to_cv2(right_msg, desired_encoding='bgr8')
+
+            # Update camera parameters
+            if self.camera_matrix is None:
+                self.camera_matrix = np.array(left_cam_info.k).reshape(3, 3)
+
+            # Process VSLAM
+            pose_change = self.process_vslam(left_cv, right_cv)
+
+            if pose_change is not None:
+                self.update_pose(pose_change, left_msg.header.stamp)
+
+        except Exception as e:
+            self.get_logger().error(f'Stereo callback error: {e}')
+
+    def rgb_callback(self, rgb_msg):
+        """
+        Process RGB camera data for detection integration.
+        """
+        if not self.processing_enabled:
+            return
+
+        try:
+            # Convert to OpenCV
+            rgb_cv = self.cv_bridge.imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
+
+            # Process detections if available
+            if self.detections:
+                self.process_detection_integration(rgb_cv, rgb_msg.header.stamp)
+
+            # Publish visualization
+            self.publish_combined_visualization(rgb_cv, rgb_msg.header.stamp)
+
+        except Exception as e:
+            self.get_logger().error(f'RGB callback error: {e}')
+
+    def detection_callback(self, detection_msg):
+        """
+        Process object detection results.
+        """
+        self.detections = detection_msg.detections
+        self.get_logger().info(f'Received {len(self.detections)} detections')
+
+    def process_vslam(self, left_img, right_img):
+        """
+        Process stereo images for VSLAM.
+        """
+        if self.prev_frame is None:
+            self.prev_frame = left_img.copy()
+            return None
+
+        # Extract features
+        curr_kp, curr_desc = self.feature_detector.detectAndCompute(left_img, None)
+        prev_kp, prev_desc = self.feature_detector.detectAndCompute(self.prev_frame, None)
+
+        if curr_desc is None or prev_desc is None:
+            return None
+
+        # Match features
+        matches = self.bf_matcher.knnMatch(prev_desc, curr_desc, k=2)
+        good_matches = []
+        for match_pair in matches:
+            if len(match_pair) == 2:
+                m, n = match_pair
+                if m.distance < 0.75 * n.distance:
+                    good_matches.append(m)
+
+        # Need minimum matches
+        if len(good_matches) < 10:
+            self.prev_frame = left_img.copy()
+            return None
+
+        # Extract matched points
+        prev_pts = np.float32([prev_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        curr_pts = np.float32([curr_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+        # Estimate motion
+        if self.camera_matrix is not None:
+            E, mask = cv2.findEssentialMat(
+                curr_pts, prev_pts,
+                cameraMatrix=self.camera_matrix,
+                method=cv2.RANSAC,
+                prob=0.999,
+                threshold=1.0
+            )
+
+            if E is not None:
+                _, R, t, mask_pose = cv2.recoverPose(E, curr_pts, prev_pts, self.camera_matrix)
+
+                pose_change = np.eye(4)
+                pose_change[:3, :3] = R
+                pose_change[:3, 3] = t.flatten()
+
+                self.prev_frame = left_img.copy()
+                return pose_change
+
+        self.prev_frame = left_img.copy()
+        return None
+
+    def process_detection_integration(self, rgb_img, stamp):
+        """
+        Integrate object detections with SLAM localization.
+        """
+        if not self.detections or self.camera_matrix is None:
+            return
+
+        for detection in self.detections:
+            if detection.results and detection.results[0].score > 0.5:
+                # Get bounding box
+                bbox = detection.bbox
+                center_x = bbox.center.position.x
+                center_y = bbox.center.position.y
+
+                # Estimate depth (in a real implementation, use depth sensor)
+                estimated_depth = 1.0  # Placeholder
+
+                # Convert to 3D world coordinates
+                if self.current_pose is not None:
+                    fx, fy = self.camera_matrix[0, 0], self.camera_matrix[1, 1]
+                    cx, cy = self.camera_matrix[0, 2], self.camera_matrix[1, 2]
+
+                    # Convert to 3D point in camera frame
+                    x_cam = (center_x - cx) * estimated_depth / fx
+                    y_cam = (center_y - cy) * estimated_depth / fy
+                    z_cam = estimated_depth
+
+                    # Transform to world frame
+                    point_cam = np.array([x_cam, y_cam, z_cam, 1.0])
+                    point_world = self.current_pose @ point_cam
+
+                    # Add to semantic map
+                    self.add_semantic_object(
+                        point_world[:3],
+                        detection.results[0].id,
+                        detection.results[0].score,
+                        detection.results[0].class_name
+                    )
+
+        # Publish updated semantic map
+        self.publish_semantic_map(stamp)
+
+    def add_semantic_object(self, position, obj_id, confidence, class_name):
+        """
+        Add a detected object to the semantic map.
+        """
+        semantic_obj = {
+            'id': obj_id,
+            'position': position,
+            'confidence': confidence,
+            'class_name': class_name,
+            'timestamp': self.get_clock().now().nanoseconds
+        }
+
+        self.semantic_points.append(semantic_obj)
+
+    def update_pose(self, pose_change, stamp):
+        """
+        Update the current pose based on SLAM.
+        """
+        self.current_pose = self.current_pose @ pose_change
+
+        # Publish odometry
+        odom_msg = Odometry()
+        odom_msg.header.stamp = stamp
+        odom_msg.header.frame_id = 'map'
+        odom_msg.child_frame_id = 'base_link'
+
+        odom_msg.pose.pose.position.x = self.current_pose[0, 3]
+        odom_msg.pose.pose.position.y = self.current_pose[1, 3]
+        odom_msg.pose.pose.position.z = self.current_pose[2, 3]
+
+        rotation_matrix = self.current_pose[:3, :3]
+        quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+        odom_msg.pose.pose.orientation.x = quat[0]
+        odom_msg.pose.pose.orientation.y = quat[1]
+        odom_msg.pose.pose.orientation.z = quat[2]
+        odom_msg.pose.pose.orientation.w = quat[3]
+
+        self.odom_pub.publish(odom_msg)
+
+        # Publish TF
+        self.publish_transform(stamp)
+
+    def publish_semantic_map(self, stamp):
+        """
+        Publish the semantic map.
+        """
+        # In a real implementation, this would create a proper semantic occupancy grid
+        # For this lab, we'll just log the objects
+        self.get_logger().info(f'Semantic map contains {len(self.semantic_points)} objects')
+
+    def publish_combined_visualization(self, rgb_img, stamp):
+        """
+        Publish combined visualization of detections and SLAM.
+        """
+        if self.detections:
+            viz_img = rgb_img.copy()
+            for detection in self.detections:
+                if detection.results and detection.results[0].score > 0.5:
+                    bbox = detection.bbox
+                    x = int(bbox.center.position.x - bbox.size_x / 2)
+                    y = int(bbox.center.position.y - bbox.size_y / 2)
+                    w = int(bbox.size_x)
+                    h = int(bbox.size_y)
+
+                    cv2.rectangle(viz_img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.putText(viz_img, f"{detection.results[0].class_name}: {detection.results[0].score:.2f}",
+                               (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # Publish visualization
+            viz_msg = self.cv_bridge.cv2_to_imgmsg(viz_img, encoding='bgr8')
+            viz_msg.header.stamp = stamp
+            viz_msg.header.frame_id = 'camera_rgb_optical_frame'
+            self.combined_viz_pub.publish(viz_msg)
+
+    def publish_transform(self, stamp):
+        """
+        Publish the transform from map to base_link.
+        """
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'base_link'
+
+        t.transform.translation.x = self.current_pose[0, 3]
+        t.transform.translation.y = self.current_pose[1, 3]
+        t.transform.translation.z = self.current_pose[2, 3]
+
+        rotation_matrix = self.current_pose[:3, :3]
+        quat = self.rotation_matrix_to_quaternion(rotation_matrix)
+        t.transform.rotation.x = quat[0]
+        t.transform.rotation.y = quat[1]
+        t.transform.rotation.z = quat[2]
+        t.transform.rotation.w = quat[3]
+
+        self.tf_broadcaster.sendTransform(t)
+
+    def rotation_matrix_to_quaternion(self, rotation_matrix):
+        """
+        Convert rotation matrix to quaternion.
+        """
+        quat = tf_transformations.quaternion_from_matrix(
+            np.vstack([np.hstack([rotation_matrix, np.zeros((3, 1))]),
+                      [0, 0, 0, 1]])
+        )
+        return quat
+
+
+def main(args=None):
+    """
+    Main function for the perception pipeline lab.
+    """
+    rclpy.init(args=args)
+
+    perception_lab = PerceptionPipelineLab()
+
+    try:
+        rclpy.spin(perception_lab)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        perception_lab.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+### Exercise 2: Semantic Map Creation
+
+Create a semantic map that combines geometric information from SLAM with semantic information from object detection:
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+from nav_msgs.msg import OccupancyGrid
+from geometry_msgs.msg import Point
+from std_msgs.msg import Header
+import struct
+
+
+class SemanticMapBuilder:
+    """
+    Build semantic maps combining SLAM and object detection.
+    """
+
+    def __init__(self, resolution=0.1, width=100, height=100):
+        self.resolution = resolution
+        self.width = width
+        self.height = height
+        self.origin_x = -width * resolution / 2
+        self.origin_y = -height * resolution / 2
+
+        # Initialize occupancy grid
+        self.grid = np.zeros((height, width), dtype=np.int8)
+
+        # Semantic information storage
+        self.semantic_objects = []
+        self.object_classes = {}
+
+    def add_object_to_map(self, position, obj_class, confidence):
+        """
+        Add a detected object to the semantic map.
+        """
+        # Convert world coordinates to grid coordinates
+        grid_x = int((position[0] - self.origin_x) / self.resolution)
+        grid_y = int((position[1] - self.origin_y) / self.resolution)
+
+        # Check bounds
+        if 0 <= grid_x < self.width and 0 <= grid_y < self.height:
+            # Store semantic information
+            obj_info = {
+                'position': position,
+                'class': obj_class,
+                'confidence': confidence,
+                'grid_x': grid_x,
+                'grid_y': grid_y
+            }
+            self.semantic_objects.append(obj_info)
+
+            # Update occupancy grid
+            self.grid[grid_y, grid_x] = 100  # Mark as occupied
+
+            # Update class mapping
+            if obj_class not in self.object_classes:
+                self.object_classes[obj_class] = []
+            self.object_classes[obj_class].append(obj_info)
+
+    def create_occupancy_grid_msg(self, frame_id='map'):
+        """
+        Create an OccupancyGrid message from the semantic map.
+        """
+        grid_msg = OccupancyGrid()
+        grid_msg.header = Header()
+        grid_msg.header.stamp = self.get_clock().now().to_msg()
+        grid_msg.header.frame_id = frame_id
+
+        grid_msg.info.resolution = self.resolution
+        grid_msg.info.width = self.width
+        grid_msg.info.height = self.height
+        grid_msg.info.origin.position.x = self.origin_x
+        grid_msg.info.origin.position.y = self.origin_y
+        grid_msg.info.origin.position.z = 0.0
+        grid_msg.info.origin.orientation.w = 1.0
+
+        # Flatten grid for message
+        grid_msg.data = self.grid.flatten().tolist()
+
+        return grid_msg
+
+    def get_objects_in_area(self, center_x, center_y, radius):
+        """
+        Get objects within a certain radius of a point.
+        """
+        objects_in_area = []
+        for obj in self.semantic_objects:
+            dist = np.sqrt((obj['position'][0] - center_x)**2 + (obj['position'][1] - center_y)**2)
+            if dist <= radius:
+                objects_in_area.append(obj)
+        return objects_in_area
+
+    def get_object_class_distribution(self):
+        """
+        Get the distribution of object classes in the map.
+        """
+        distribution = {}
+        for class_name, objects in self.object_classes.items():
+            distribution[class_name] = len(objects)
+        return distribution
+```
+
+### Exercise 3: Performance Evaluation
+
+Implement metrics to evaluate the perception pipeline performance:
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import time
+from collections import deque
+
+
+class PerceptionEvaluator:
+    """
+    Evaluate perception pipeline performance.
+    """
+
+    def __init__(self):
+        self.processing_times = deque(maxlen=100)
+        self.detection_accuracies = deque(maxlen=100)
+        self.localization_errors = deque(maxlen=100)
+        self.frame_rates = deque(maxlen=100)
+
+        self.start_time = time.time()
+        self.frame_count = 0
+
+    def start_timing(self):
+        """
+        Start timing for performance measurement.
+        """
+        return time.time()
+
+    def end_timing(self, start_time):
+        """
+        End timing and record processing time.
+        """
+        end_time = time.time()
+        processing_time = end_time - start_time
+        self.processing_times.append(processing_time)
+
+    def record_detection_accuracy(self, accuracy):
+        """
+        Record detection accuracy.
+        """
+        self.detection_accuracies.append(accuracy)
+
+    def record_localization_error(self, error):
+        """
+        Record localization error.
+        """
+        self.localization_errors.append(error)
+
+    def calculate_fps(self):
+        """
+        Calculate frames per second.
+        """
+        current_time = time.time()
+        elapsed_time = current_time - self.start_time
+        fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
+        self.frame_rates.append(fps)
+        self.frame_count += 1
+        return fps
+
+    def get_performance_metrics(self):
+        """
+        Get comprehensive performance metrics.
+        """
+        metrics = {}
+
+        if self.processing_times:
+            metrics['avg_processing_time'] = np.mean(self.processing_times)
+            metrics['min_processing_time'] = min(self.processing_times)
+            metrics['max_processing_time'] = max(self.processing_times)
+            metrics['std_processing_time'] = np.std(self.processing_times)
+
+        if self.detection_accuracies:
+            metrics['avg_detection_accuracy'] = np.mean(self.detection_accuracies)
+            metrics['detection_accuracy_std'] = np.std(self.detection_accuracies)
+
+        if self.localization_errors:
+            metrics['avg_localization_error'] = np.mean(self.localization_errors)
+            metrics['localization_error_std'] = np.std(self.localization_errors)
+
+        if self.frame_rates:
+            metrics['avg_fps'] = np.mean(self.frame_rates)
+            metrics['min_fps'] = min(self.frame_rates)
+            metrics['max_fps'] = max(self.frame_rates)
+
+        return metrics
+
+    def print_performance_report(self):
+        """
+        Print a performance report.
+        """
+        metrics = self.get_performance_metrics()
+
+        print("Perception Pipeline Performance Report")
+        print("=" * 40)
+
+        if 'avg_processing_time' in metrics:
+            print(f"Average Processing Time: {metrics['avg_processing_time']:.4f}s "
+                  f"({1/metrics['avg_processing_time']:.2f} Hz)")
+
+        if 'avg_detection_accuracy' in metrics:
+            print(f"Average Detection Accuracy: {metrics['avg_detection_accuracy']:.4f}")
+
+        if 'avg_localization_error' in metrics:
+            print(f"Average Localization Error: {metrics['avg_localization_error']:.4f}m")
+
+        if 'avg_fps' in metrics:
+            print(f"Average Frame Rate: {metrics['avg_fps']:.2f} FPS")
+
+        print("=" * 40)
+```
+
+## Lab Report Template
+
+Create a comprehensive lab report documenting your findings:
+
+```python
+def create_lab_report_template():
+    """
+    Create a template for the lab report.
+    """
+    report_template = """
+# Isaac-based Perception Pipeline Lab Report
+
+## Student Information
+- Name: ________________
+- Date: ________________
+- Course: ________________
+
+## Objective
+The objective of this lab is to integrate Visual SLAM and object detection into a unified perception pipeline for humanoid robots using Isaac Sim and Isaac ROS components.
+
+## Pre-Lab Questions
+1. Explain the difference between geometric mapping and semantic mapping.
+2. Why is it important to integrate SLAM and object detection?
+3. What are the challenges in real-time perception pipeline implementation?
+
+## Procedure
+### Step 1: Environment Setup
+- [ ] Set up Isaac Sim with perception components
+- [ ] Configure stereo cameras and RGB camera
+- [ ] Launch Isaac ROS perception nodes
+
+### Step 2: SLAM and Detection Integration
+- [ ] Implement perception pipeline node
+- [ ] Synchronize SLAM and detection data
+- [ ] Transform detections to world coordinates
+
+### Step 3: Semantic Map Creation
+- [ ] Create semantic map combining geometric and semantic data
+- [ ] Implement object tracking across frames
+- [ ] Visualize semantic map
+
+### Step 4: Performance Evaluation
+- [ ] Implement performance metrics
+- [ ] Measure processing time and accuracy
+- [ ] Analyze results
+
+## Results and Analysis
+### Performance Metrics
+- Average Processing Time: ________ ms
+- Detection Accuracy: ________ %
+- Localization Error: ________ m
+- Frame Rate: ________ FPS
+
+### Qualitative Results
+- Describe the performance of the integrated pipeline
+- Discuss any challenges encountered
+- Note any improvements observed compared to separate systems
+
+### Issues Encountered
+1. Issue: ________________
+   Solution: ________________
+
+2. Issue: ________________
+   Solution: ________________
+
+## Discussion
+1. How does integrating SLAM and object detection improve perception?
+2. What are the computational requirements of the integrated pipeline?
+3. How robust is the system to different lighting conditions?
+4. What are the limitations of current approach?
+
+## Conclusion
+Summarize the key findings and insights from the lab exercise. Discuss the effectiveness of the integrated perception pipeline and potential improvements.
+
+## Code Repository
+- Include links to your implementation code
+- Document any modifications made to the provided templates
+
+## References
+- List any resources or papers referenced in the lab
+"""
+
+    with open("perception_pipeline_lab_report_template.md", "w") as f:
+        f.write(report_template)
+
+    print("Lab report template created: perception_pipeline_lab_report_template.md")
+
+
+if __name__ == "__main__":
+    create_lab_report_template()
+```
+
+## Troubleshooting
+
+Common issues and solutions:
+
+- **Issue: Synchronization problems between SLAM and detection**: Use message_filters.ApproximateTimeSynchronizer with appropriate slop values.
+- **Issue: Coordinate frame mismatches**: Ensure all transformations are properly handled using TF2.
+- **Issue: Performance bottlenecks**: Optimize feature detection, use efficient data structures, and consider parallel processing.
+- **Issue: False positive detections**: Implement tracking and filtering to reduce noise in detection results.
+
+## Summary
+
+This lab provided hands-on experience with integrating Visual SLAM and object detection in a unified perception pipeline for humanoid robots. Students learned to combine geometric mapping with semantic understanding, creating more capable and robust perception systems. The integration of Isaac Sim and Isaac ROS components demonstrated the power of NVIDIA's robotics platform for complex perception tasks.
+
+## Further Reading
+
+- Isaac ROS Perception Documentation
+- Simultaneous Localization and Mapping
+- Object Detection in Robotics
+- Semantic Mapping Techniques
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement object tracking across multiple frames to improve semantic map consistency.
+2. Add uncertainty modeling to the semantic mapping process.
+3. Create a more sophisticated evaluation framework for perception pipeline performance.
+
+<!-- Optional: Add custom components for interactive elements -->

@@ -1,0 +1,393 @@
+#usda 1.0
+
+def Xform "World"
+{
+    def Xform "GroundPlane"
+    {
+        def Cylinder "ground"
+        {
+            matrix4d xformOp:transform = ( (100, 0, 0, 0), (0, 0.1, 0, 0), (0, 0, 100, 0), (0, 0, 0, 1) )
+            uniform token[] apiSchemas = ["PhysicsMesh", "CollisionAPI"]
+            float3 color = (0.2, 0.2, 0.2)
+            rel material:binding = </Materials/GroundMaterial>
+        }
+    }
+
+    def Xform "Lighting"
+    {
+        def DomeLight "DomeLight"
+        {
+            float intensity = 500
+            float exposure = 0
+            color3f color = (1, 1, 1)
+            bool visible = 1
+            float3 inputs:rotation = (0, 0, 0)
+        }
+
+        def DistantLight "KeyLight"
+        {
+            float intensity = 1000
+            float exposure = 0
+            color3f color = (1, 0.95, 0.9)
+            bool visible = 1
+            float3 inputs:rotation = (-30, 45, 0)
+        }
+
+        def DistantLight "FillLight"
+        {
+            float intensity = 300
+            float exposure = 0
+            color3f color = (0.8, 0.9, 1)
+            bool visible = 1
+            float3 inputs:rotation = (30, -30, 180)
+        }
+    }
+
+    def Xform "CameraRig"
+    {
+        def Camera "rgb_camera"
+        {
+            float focalLength = 24
+            float horizontalAperture = 36
+            float verticalAperture = 24
+            float3 primvars:apertureOffset = (0, 0)
+            float projection = 0
+            float3 xformOp:translate = (2, -2, 1.5)
+            float3 xformOp:rotateXYZ = (15, 45, 0)
+            rel material:binding = </Materials/CameraMaterial>
+        }
+
+        def Camera "depth_camera"
+        {
+            float focalLength = 24
+            float horizontalAperture = 36
+            float verticalAperture = 24
+            float3 primvars:apertureOffset = (0, 0)
+            float projection = 0
+            float3 xformOp:translate = (2, -2, 1.5)
+            float3 xformOp:rotateXYZ = (15, 45, 0)
+        }
+    }
+
+    def Xform "TrainingObjects"
+    {
+        # Various objects for synthetic data training
+        def Cube "training_cube_1"
+        {
+            float3 xformOp:translate = (-1, -1, 0.2)
+            float3 size = (0.4, 0.4, 0.4)
+            float3 color = (0.8, 0.1, 0.1)
+            rel material:binding = </Materials/RedMaterial>
+        }
+
+        def Sphere "training_sphere_1"
+        {
+            float3 xformOp:translate = (1, -0.5, 0.2)
+            float radius = 0.2
+            float3 color = (0.1, 0.8, 0.1)
+            rel material:binding = </Materials/GreenMaterial>
+        }
+
+        def Cylinder "training_cylinder_1"
+        {
+            float3 xformOp:translate = (0, 1, 0.3)
+            float radius = 0.15
+            float height = 0.6
+            float3 color = (0.1, 0.1, 0.8)
+            rel material:binding = </Materials/BlueMaterial>
+        }
+
+        def Cone "training_cone_1"
+        {
+            float3 xformOp:translate = (-1.5, 1.2, 0.25)
+            float radius = 0.2
+            float height = 0.5
+            float3 color = (0.8, 0.8, 0.1)
+            rel material:binding = </Materials/YellowMaterial>
+        }
+
+        # Additional objects for complexity
+        def Cube "training_cube_2"
+        {
+            float3 xformOp:translate = (1.2, 1.2, 0.2)
+            float3 size = (0.3, 0.6, 0.3)
+            float3 color = (0.8, 0.4, 0.2)
+            rel material:binding = </Materials/OrangeMaterial>
+        }
+
+        def Sphere "training_sphere_2"
+        {
+            float3 xformOp:translate = (-0.8, 1.5, 0.3)
+            float radius = 0.25
+            float3 color = (0.4, 0.2, 0.8)
+            rel material:binding = </Materials/PurpleMaterial>
+        }
+    }
+
+    def Xform "HumanoidRobot"
+    {
+        # Simple humanoid model for training
+        def Capsule "torso"
+        {
+            float3 xformOp:translate = (0, 0, 1.0)
+            float radius = 0.15
+            float height = 0.8
+            float3 color = (0.5, 0.5, 0.5)
+            rel material:binding = </Materials/RobotMaterial>
+        }
+
+        def Sphere "head"
+        {
+            float3 xformOp:translate = (0, 0, 1.6)
+            float radius = 0.15
+            float3 color = (0.6, 0.6, 0.6)
+            rel material:binding = </Materials/RobotHeadMaterial>
+        }
+
+        def Capsule "left_arm"
+        {
+            float3 xformOp:translate = (-0.3, 0, 1.2)
+            float3 xformOp:rotateXYZ = (0, 0, -30)
+            float radius = 0.05
+            float height = 0.5
+            float3 color = (0.5, 0.5, 0.5)
+            rel material:binding = </Materials/RobotMaterial>
+        }
+
+        def Capsule "right_arm"
+        {
+            float3 xformOp:translate = (0.3, 0, 1.2)
+            float3 xformOp:rotateXYZ = (0, 0, 30)
+            float radius = 0.05
+            float height = 0.5
+            float3 color = (0.5, 0.5, 0.5)
+            rel material:binding = </Materials/RobotMaterial>
+        }
+
+        def Capsule "left_leg"
+        {
+            float3 xformOp:translate = (-0.15, 0, 0.5)
+            float3 xformOp:rotateXYZ = (0, 0, 5)
+            float radius = 0.08
+            float height = 0.7
+            float3 color = (0.5, 0.5, 0.5)
+            rel material:binding = </Materials/RobotMaterial>
+        }
+
+        def Capsule "right_leg"
+        {
+            float3 xformOp:translate = (0.15, 0, 0.5)
+            float3 xformOp:rotateXYZ = (0, 0, -5)
+            float radius = 0.08
+            float height = 0.7
+            float3 color = (0.5, 0.5, 0.5)
+            rel material:binding = </Materials/RobotMaterial>
+        }
+    }
+
+    def Xform "Materials"
+    {
+        def Material "GroundMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.2, 0.2, 0.2)
+                float inputs:metallic = 0.0
+                float inputs:roughness = 0.8
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/GroundMaterial/PreviewSurface>
+        }
+
+        def Material "RedMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.8, 0.1, 0.1)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/RedMaterial/PreviewSurface>
+        }
+
+        def Material "GreenMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.1, 0.8, 0.1)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/GreenMaterial/PreviewSurface>
+        }
+
+        def Material "BlueMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.1, 0.1, 0.8)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/BlueMaterial/PreviewSurface>
+        }
+
+        def Material "YellowMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.8, 0.8, 0.1)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/YellowMaterial/PreviewSurface>
+        }
+
+        def Material "OrangeMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.8, 0.4, 0.2)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/OrangeMaterial/PreviewSurface>
+        }
+
+        def Material "PurpleMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.4, 0.2, 0.8)
+                float inputs:metallic = 0.1
+                float inputs:roughness = 0.4
+                float inputs:clearcoat = 0.0
+                float inputs:clearcoatRoughness = 0.01
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.0, 0.0, 0.0)
+            }
+            rel surface:shader = </Materials/PurpleMaterial/PreviewSurface>
+        }
+
+        def Material "RobotMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.5, 0.5, 0.5)
+                float inputs:metallic = 0.7
+                float inputs:roughness = 0.3
+                float inputs:clearcoat = 0.5
+                float inputs:clearcoatRoughness = 0.1
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.5, 0.5, 0.5)
+            }
+            rel surface:shader = </Materials/RobotMaterial/PreviewSurface>
+        }
+
+        def Material "RobotHeadMaterial"
+        {
+            def Shader "PreviewSurface"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                float3 inputs:diffuseColor = (0.6, 0.6, 0.6)
+                float inputs:metallic = 0.2
+                float inputs:roughness = 0.5
+                float inputs:clearcoat = 0.3
+                float inputs:clearcoatRoughness = 0.2
+                float inputs:opacity = 1.0
+                float inputs:ior = 1.5
+                float3 inputs:emissiveColor = (0, 0, 0)
+                float inputs:specularColor = (0.3, 0.3, 0.3)
+            }
+            rel surface:shader = </Materials/RobotHeadMaterial/PreviewSurface>
+        }
+    }
+
+    # Isaac Sim-specific prim definitions for sensors and physics
+    def Xform "IsaacSensors"
+    {
+        # RGB camera sensor definition
+        def Camera "isaac_rgb_camera"
+        {
+            float focalLength = 24
+            float horizontalAperture = 36
+            float verticalAperture = 24
+            float3 primvars:apertureOffset = (0, 0)
+            float projection = 0
+            float3 xformOp:translate = (2, -2, 1.5)
+            float3 xformOp:rotateXYZ = (15, 45, 0)
+        }
+
+        # Depth camera sensor definition
+        def Camera "isaac_depth_camera"
+        {
+            float focalLength = 24
+            float horizontalAperture = 36
+            float verticalAperture = 24
+            float3 primvars:apertureOffset = (0, 0)
+            float projection = 0
+            float3 xformOp:translate = (2, -2, 1.5)
+            float3 xformOp:rotateXYZ = (15, 45, 0)
+        }
+    }
+
+    def Xform "IsaacLighting"
+    {
+        # Isaac Sim compatible lighting
+        def DomeLight "isaac_dome_light"
+        {
+            float intensity = 500
+            float exposure = 0
+            color3f color = (1, 1, 1)
+            bool visible = 1
+            float3 inputs:rotation = (0, 0, 0)
+        }
+    }
+}

@@ -1,0 +1,1101 @@
+---
+title: Sim-to-Real Transfer Strategies
+description: Techniques for transferring policies and models from simulation to real humanoid robots
+---
+
+import DocCardList from '@theme/DocCardList';
+
+## Learning Objectives
+
+After completing this chapter, you will be able to:
+- Understand the sim-to-real transfer problem in robotics
+- Implement domain randomization techniques for improved transfer
+- Apply system identification methods to bridge simulation and reality
+- Design policies that are robust to modeling errors
+- Evaluate and validate sim-to-real transfer performance
+- Address the reality gap in humanoid robot control
+
+## Prerequisites
+
+Before starting this chapter, you should:
+- Have completed Module 1-5 on ROS 2, simulation, navigation, and RL
+- Understand the basics of system identification and parameter estimation
+- Be familiar with Isaac Sim and Python programming
+- Have experience with machine learning and control theory
+- Understand humanoid robot dynamics and control
+
+## Introduction
+
+The sim-to-real transfer problem is one of the most significant challenges in modern robotics. While simulation provides a safe, fast, and cost-effective environment for developing and testing robot control policies, the differences between simulated and real environments—known as the "reality gap"—can significantly impact the performance of policies when deployed on physical robots.
+
+For humanoid robots, this challenge is particularly acute due to their complex dynamics, numerous degrees of freedom, and sensitivity to contact interactions. The reality gap encompasses differences in:
+- Physical parameters (mass, friction, inertial properties)
+- Sensor characteristics (noise, delay, calibration)
+- Actuator behavior (dynamics, backlash, efficiency)
+- Environmental conditions (surfaces, lighting, disturbances)
+- Modeling approximations (contact models, friction models)
+
+Successfully bridging this gap requires a combination of simulation techniques, system identification, and robust control design. This chapter explores various strategies for achieving effective sim-to-real transfer in humanoid robotics applications.
+
+## Core Concepts
+
+### The Reality Gap
+
+The reality gap consists of multiple components:
+- **Dynamics Mismatch**: Differences in robot dynamics between simulation and reality
+- **Sensor Mismatch**: Variations in sensor characteristics and noise patterns
+- **Actuator Mismatch**: Discrepancies in actuator dynamics and response
+- **Environmental Mismatch**: Differences in contact properties and external disturbances
+- **Modeling Errors**: Approximations and simplifications in simulation models
+
+### Domain Randomization
+
+Domain randomization is a technique that randomizes simulation parameters during training to improve robustness:
+- **Parameter Randomization**: Varying physical parameters across wide ranges
+- **Visual Randomization**: Randomizing appearance for vision-based tasks
+- **Dynamics Randomization**: Randomizing robot dynamics and environmental properties
+- **Sensor Randomization**: Simulating various sensor characteristics
+
+### System Identification
+
+System identification methods help bridge the simulation-reality gap:
+- **Parameter Estimation**: Identifying physical parameters of the real robot
+- **Dynamics Learning**: Learning accurate dynamics models from data
+- **Transfer Learning**: Adapting simulation models to match reality
+- **Online Adaptation**: Adjusting models based on real-world data
+
+### Robust Control Design
+
+Designing controllers that are robust to modeling errors:
+- **H-infinity Control**: Optimizing worst-case performance
+- **Robust Model Predictive Control**: Accounting for model uncertainty
+- **Adaptive Control**: Adjusting controller parameters online
+- **Learning-based Control**: Combining learning with robust control
+
+## Code Examples
+
+### Domain Randomization Implementation
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import torch
+import torch.nn as nn
+from typing import Dict, List, Tuple, Optional, Any
+import random
+from dataclasses import dataclass
+
+
+@dataclass
+class DomainRandomizationConfig:
+    """
+    Configuration for domain randomization parameters.
+    """
+    # Robot physical parameters
+    mass_range: Tuple[float, float] = (0.8, 1.2)  # Multiplier for mass
+    friction_range: Tuple[float, float] = (0.5, 1.5)  # Multiplier for friction
+    com_offset_range: Tuple[float, float] = (-0.05, 0.05)  # COM offset in meters
+    inertia_range: Tuple[float, float] = (0.8, 1.2)  # Multiplier for inertia
+
+    # Actuator parameters
+    actuator_delay_range: Tuple[float, float] = (0.0, 0.02)  # Actuator delay in seconds
+    actuator_noise_range: Tuple[float, float] = (0.0, 0.01)  # Actuator noise magnitude
+    actuator_gear_ratio_range: Tuple[float, float] = (0.95, 1.05)  # Gear ratio variation
+
+    # Sensor parameters
+    sensor_noise_range: Tuple[float, float] = (0.0, 0.01)  # Sensor noise
+    sensor_bias_range: Tuple[float, float] = (-0.005, 0.005)  # Sensor bias
+    sensor_delay_range: Tuple[float, float] = (0.0, 0.01)  # Sensor delay
+
+    # Environmental parameters
+    gravity_range: Tuple[float, float] = (9.5, 10.1)  # Gravity variation
+    ground_friction_range: Tuple[float, float] = (0.4, 1.0)  # Ground friction
+    ground_roughness_range: Tuple[float, float] = (0.0, 0.01)  # Ground roughness
+
+    # Control parameters
+    control_dt_range: Tuple[float, float] = (0.001, 0.003)  # Control timestep variation
+
+
+class DomainRandomizer:
+    """
+    Class for implementing domain randomization in Isaac Sim.
+    """
+
+    def __init__(self, config: DomainRandomizationConfig = None):
+        self.config = config or DomainRandomizationConfig()
+        self.current_params = self.randomize_all()
+
+    def randomize_all(self) -> Dict[str, Any]:
+        """
+        Randomize all parameters according to configured ranges.
+        """
+        params = {
+            # Robot physical parameters
+            'mass_multiplier': np.random.uniform(
+                self.config.mass_range[0], self.config.mass_range[1]
+            ),
+            'friction_multiplier': np.random.uniform(
+                self.config.friction_range[0], self.config.friction_range[1]
+            ),
+            'com_offset': np.random.uniform(
+                self.config.com_offset_range[0], self.config.com_offset_range[1], size=3
+            ),
+            'inertia_multiplier': np.random.uniform(
+                self.config.inertia_range[0], self.config.inertia_range[1]
+            ),
+
+            # Actuator parameters
+            'actuator_delay': np.random.uniform(
+                self.config.actuator_delay_range[0], self.config.actuator_delay_range[1]
+            ),
+            'actuator_noise': np.random.uniform(
+                self.config.actuator_noise_range[0], self.config.actuator_noise_range[1]
+            ),
+            'actuator_gear_ratio': np.random.uniform(
+                self.config.actuator_gear_ratio_range[0], self.config.actuator_gear_ratio_range[1]
+            ),
+
+            # Sensor parameters
+            'sensor_noise': np.random.uniform(
+                self.config.sensor_noise_range[0], self.config.sensor_noise_range[1]
+            ),
+            'sensor_bias': np.random.uniform(
+                self.config.sensor_bias_range[0], self.config.sensor_bias_range[1], size=3
+            ),
+            'sensor_delay': np.random.uniform(
+                self.config.sensor_delay_range[0], self.config.sensor_delay_range[1]
+            ),
+
+            # Environmental parameters
+            'gravity': np.random.uniform(
+                self.config.gravity_range[0], self.config.gravity_range[1]
+            ),
+            'ground_friction': np.random.uniform(
+                self.config.ground_friction_range[0], self.config.ground_friction_range[1]
+            ),
+            'ground_roughness': np.random.uniform(
+                self.config.ground_roughness_range[0], self.config.ground_roughness_range[1]
+            ),
+
+            # Control parameters
+            'control_dt': np.random.uniform(
+                self.config.control_dt_range[0], self.config.control_dt_range[1]
+            )
+        }
+
+        return params
+
+    def randomize_mass(self) -> float:
+        """
+        Randomize robot mass.
+        """
+        return np.random.uniform(
+            self.config.mass_range[0], self.config.mass_range[1]
+        )
+
+    def randomize_friction(self) -> float:
+        """
+        Randomize friction coefficients.
+        """
+        return np.random.uniform(
+            self.config.friction_range[0], self.config.friction_range[1]
+        )
+
+    def randomize_com_offset(self) -> np.ndarray:
+        """
+        Randomize center of mass offset.
+        """
+        return np.random.uniform(
+            self.config.com_offset_range[0], self.config.com_offset_range[1], size=3
+        )
+
+    def randomize_actuator_delay(self) -> float:
+        """
+        Randomize actuator delay.
+        """
+        return np.random.uniform(
+            self.config.actuator_delay_range[0], self.config.actuator_delay_range[1]
+        )
+
+    def randomize_sensor_noise(self) -> float:
+        """
+        Randomize sensor noise level.
+        """
+        return np.random.uniform(
+            self.config.sensor_noise_range[0], self.config.sensor_noise_range[1]
+        )
+
+    def update_simulation(self, sim_env, params: Dict[str, Any]):
+        """
+        Update simulation environment with randomized parameters.
+        """
+        # In a real implementation, this would update Isaac Sim parameters
+        # For example:
+        # sim_env.set_robot_mass(params['mass_multiplier'])
+        # sim_env.set_friction(params['friction_multiplier'])
+        # sim_env.set_com_offset(params['com_offset'])
+        # etc.
+
+        # Placeholder implementation
+        print(f"Updated simulation with parameters: {list(params.keys())}")
+
+    def randomize_episode(self, sim_env):
+        """
+        Randomize parameters for a new episode.
+        """
+        params = self.randomize_all()
+        self.update_simulation(sim_env, params)
+        self.current_params = params
+        return params
+
+
+class CurriculumDomainRandomization:
+    """
+    Curriculum-based domain randomization that gradually increases difficulty.
+    """
+
+    def __init__(self, config: DomainRandomizationConfig, curriculum_steps: int = 10):
+        self.config = config
+        self.curriculum_steps = curriculum_steps
+        self.current_step = 0
+
+        # Calculate parameter ranges for each curriculum step
+        self.param_ranges = self._calculate_curriculum_ranges()
+
+    def _calculate_curriculum_ranges(self) -> Dict[str, List[Tuple[float, float]]]:
+        """
+        Calculate parameter ranges for each curriculum step.
+        """
+        ranges = {}
+
+        # Calculate progressive ranges for each parameter
+        for attr_name in ['mass_range', 'friction_range', 'com_offset_range',
+                         'actuator_delay_range', 'sensor_noise_range', 'gravity_range']:
+            base_range = getattr(self.config, attr_name)
+            min_val, max_val = base_range
+
+            # Create curriculum ranges (start narrow, expand to full range)
+            step_ranges = []
+            for step in range(self.curriculum_steps):
+                progress = step / (self.curriculum_steps - 1) if self.curriculum_steps > 1 else 1
+
+                # Calculate current range size (expanding from center)
+                center = (min_val + max_val) / 2
+                full_range_size = max_val - min_val
+                current_range_size = progress * full_range_size
+                current_min = center - current_range_size / 2
+                current_max = center + current_range_size / 2
+
+                step_ranges.append((current_min, current_max))
+
+            ranges[attr_name] = step_ranges
+
+        return ranges
+
+    def get_current_ranges(self) -> DomainRandomizationConfig:
+        """
+        Get the parameter ranges for the current curriculum step.
+        """
+        if self.current_step >= self.curriculum_steps:
+            return self.config
+
+        # Create a new config with current ranges
+        current_config = DomainRandomizationConfig()
+
+        for attr_name, step_ranges in self.param_ranges.items():
+            if self.current_step < len(step_ranges):
+                setattr(current_config, attr_name, step_ranges[self.current_step])
+
+        return current_config
+
+    def advance_curriculum(self, success_rate: float, threshold: float = 0.8):
+        """
+        Advance curriculum based on success rate.
+        """
+        if success_rate >= threshold and self.current_step < self.curriculum_steps - 1:
+            self.current_step += 1
+            print(f"Advanced curriculum to step {self.current_step + 1}/{self.curriculum_steps}")
+            return True
+        return False
+
+    def randomize_with_curriculum(self) -> Dict[str, Any]:
+        """
+        Randomize parameters according to current curriculum level.
+        """
+        current_config = self.get_current_ranges()
+        randomizer = DomainRandomizer(current_config)
+        return randomizer.randomize_all()
+
+
+class AdaptiveDomainRandomization:
+    """
+    Adaptive domain randomization that adjusts based on performance.
+    """
+
+    def __init__(self, config: DomainRandomizationConfig):
+        self.config = config
+        self.performance_history = []
+        self.param_adaptation_rates = {
+            'mass_multiplier': 0.1,
+            'friction_multiplier': 0.1,
+            'sensor_noise': 0.1,
+            'actuator_delay': 0.1
+        }
+
+    def update_adaptation(self, performance: float, target_performance: float = 0.8):
+        """
+        Update domain randomization based on performance.
+        """
+        performance_diff = target_performance - performance
+
+        # Adjust parameter ranges based on performance
+        if performance_diff > 0.1:  # Performance is too low, make easier
+            self._shrink_ranges()
+        elif performance_diff < -0.1:  # Performance is too high, make harder
+            self._expand_ranges()
+
+        self.performance_history.append(performance)
+
+    def _shrink_ranges(self):
+        """
+        Shrink parameter ranges to make task easier.
+        """
+        # Implementation would adjust ranges to be closer to nominal values
+        print("Shrinking domain randomization ranges")
+
+    def _expand_ranges(self):
+        """
+        Expand parameter ranges to make task harder.
+        """
+        # Implementation would adjust ranges to be wider
+        print("Expanding domain randomization ranges")
+
+
+def create_domain_randomization_config() -> DomainRandomizationConfig:
+    """
+    Create a domain randomization configuration with reasonable defaults.
+    """
+    return DomainRandomizationConfig(
+        mass_range=(0.9, 1.1),
+        friction_range=(0.7, 1.3),
+        com_offset_range=(-0.02, 0.02),
+        actuator_delay_range=(0.0, 0.01),
+        sensor_noise_range=(0.0, 0.005),
+        gravity_range=(9.7, 9.9)
+    )
+```
+
+### System Identification for Humanoid Robots
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from scipy.optimize import minimize
+from typing import Dict, List, Tuple, Optional
+import matplotlib.pyplot as plt
+
+
+class SystemIdentifier:
+    """
+    System identification for humanoid robots to estimate physical parameters.
+    """
+
+    def __init__(self, robot_model: str = "humanoid"):
+        self.robot_model = robot_model
+        self.parameters = self.initialize_parameters()
+        self.data_buffer = []
+        self.identification_method = "least_squares"
+
+    def initialize_parameters(self) -> Dict[str, float]:
+        """
+        Initialize robot parameters with nominal values.
+        """
+        return {
+            # Link masses (kg)
+            'torso_mass': 10.0,
+            'head_mass': 2.0,
+            'upper_arm_mass': 1.5,
+            'lower_arm_mass': 1.0,
+            'thigh_mass': 3.0,
+            'shank_mass': 2.0,
+            'foot_mass': 1.0,
+
+            # Link lengths (m)
+            'torso_height': 0.6,
+            'head_radius': 0.1,
+            'upper_arm_length': 0.3,
+            'lower_arm_length': 0.25,
+            'thigh_length': 0.4,
+            'shank_length': 0.45,
+            'foot_length': 0.2,
+
+            # Inertial parameters
+            'torso_inertia': 0.5,
+            'head_inertia': 0.02,
+            'upper_arm_inertia': 0.04,
+            'lower_arm_inertia': 0.02,
+            'thigh_inertia': 0.1,
+            'shank_inertia': 0.08,
+            'foot_inertia': 0.01,
+
+            # Friction parameters
+            'joint_viscous_friction': 0.1,
+            'joint_coulomb_friction': 0.05,
+
+            # Actuator parameters
+            'motor_torque_constant': 0.1,
+            'gear_ratio': 100.0,
+            'motor_resistance': 1.0
+        }
+
+    def collect_excitation_data(self, sim_env, num_samples: int = 1000) -> List[Dict]:
+        """
+        Collect data for system identification using persistent excitation.
+        """
+        data = []
+
+        # Apply various excitation signals to the robot
+        for i in range(num_samples):
+            # Generate random joint commands for excitation
+            joint_commands = np.random.uniform(-1.0, 1.0, size=24)  # Example: 24 joints
+
+            # Apply commands to simulation
+            sim_env.apply_joint_commands(joint_commands)
+
+            # Step simulation
+            sim_env.step()
+
+            # Collect data
+            state = sim_env.get_robot_state()
+            torques = sim_env.get_applied_torques()
+            accelerations = sim_env.get_joint_accelerations()
+
+            sample = {
+                'joint_positions': state['positions'],
+                'joint_velocities': state['velocities'],
+                'joint_accelerations': accelerations,
+                'applied_torques': torques,
+                'time': i * sim_env.dt
+            }
+
+            data.append(sample)
+
+        return data
+
+    def least_squares_identification(self, data: List[Dict]) -> Dict[str, float]:
+        """
+        Perform least squares system identification.
+        """
+        # Build regression matrix and output vector
+        # This is a simplified example - in practice, this would be more complex
+        Y = []  # Output vector (torques)
+        Phi = []  # Regression matrix (depends on dynamics model)
+
+        for sample in data:
+            q = sample['joint_positions']  # Joint positions
+            q_dot = sample['joint_velocities']  # Joint velocities
+            q_ddot = sample['joint_accelerations']  # Joint accelerations
+            tau = sample['applied_torques']  # Applied torques
+
+            # For each joint, build the dynamics equation: M(q)*q_ddot + C(q,q_dot)*q_dot + g(q) = tau
+            # In regression form: Phi * theta = tau
+            # where theta contains the unknown parameters
+
+            # This is a simplified example - real implementation would use the robot's dynamics model
+            for j in range(len(q)):
+                # Build regression vector for joint j
+                phi_j = self.build_regression_vector(q, q_dot, q_ddot, j)
+                Phi.append(phi_j)
+                Y.append(tau[j])
+
+        # Convert to numpy arrays
+        Phi = np.array(Phi)
+        Y = np.array(Y)
+
+        # Solve least squares: theta = (Phi^T * Phi)^(-1) * Phi^T * Y
+        try:
+            theta = np.linalg.solve(Phi.T @ Phi, Phi.T @ Y)
+            return self.parameters_from_theta(theta)
+        except np.linalg.LinAlgError:
+            # If matrix is singular, use pseudo-inverse
+            theta = np.linalg.pinv(Phi.T @ Phi) @ Phi.T @ Y
+            return self.parameters_from_theta(theta)
+
+    def build_regression_vector(self, q: np.ndarray, q_dot: np.ndarray,
+                               q_ddot: np.ndarray, joint_idx: int) -> np.ndarray:
+        """
+        Build regression vector for a specific joint.
+        """
+        # This is a simplified example - real implementation would depend on the specific robot model
+        # The regression vector contains terms that multiply the unknown parameters
+
+        # Example: For a simple pendulum, the equation would be:
+        # I*q_ddot + b*q_dot + m*g*l*sin(q) = tau
+        # So the regression vector would be [q_ddot, q_dot, sin(q)]
+
+        # For a humanoid robot, this would be much more complex and depend on the full kinematic chain
+        # This is just a placeholder implementation
+        return np.array([q_ddot[joint_idx], q_dot[joint_idx], np.sin(q[joint_idx])])
+
+    def parameters_from_theta(self, theta: np.ndarray) -> Dict[str, float]:
+        """
+        Convert parameter vector to parameter dictionary.
+        """
+        # This would convert the identified parameters back to meaningful robot parameters
+        # Implementation depends on how the regression vector was built
+        return self.parameters  # Placeholder
+
+    def estimate_parameters(self, sim_env, real_robot=None) -> Dict[str, float]:
+        """
+        Estimate robot parameters using system identification.
+        """
+        print("Collecting excitation data...")
+        data = self.collect_excitation_data(sim_env, num_samples=2000)
+
+        print("Performing system identification...")
+        identified_params = self.least_squares_identification(data)
+
+        # Update internal parameters
+        self.parameters.update(identified_params)
+
+        return identified_params
+
+    def validate_model(self, sim_env, real_robot, params: Dict[str, float]) -> float:
+        """
+        Validate the identified model against real robot data.
+        """
+        # Apply the same commands to both simulation and real robot
+        # Compare the responses to evaluate model accuracy
+        # Return a validation metric (e.g., RMSE)
+        pass
+
+
+class DynamicsLearner(nn.Module):
+    """
+    Neural network for learning robot dynamics.
+    """
+
+    def __init__(self, state_dim: int, action_dim: int, hidden_dims: List[int] = [256, 256, 128]):
+        super(DynamicsLearner, self).__init__()
+
+        # Input: current state and action
+        input_dim = state_dim + action_dim
+
+        # Output: next state (or state difference)
+        output_dim = state_dim
+
+        # Build network
+        layers = []
+        dims = [input_dim] + hidden_dims + [output_dim]
+
+        for i in range(len(dims) - 1):
+            layers.append(nn.Linear(dims[i], dims[i+1]))
+            if i < len(dims) - 2:  # Don't add activation after last layer
+                layers.append(nn.ReLU())
+
+        self.network = nn.Sequential(*layers)
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        """
+        Initialize network weights.
+        """
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            nn.init.zeros_(m.bias)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass: predict next state given current state and action.
+        """
+        # Concatenate state and action
+        x = torch.cat([state, action], dim=-1)
+
+        # Pass through network
+        next_state = self.network(x)
+
+        return next_state
+
+    def predict_dynamics(self, state: torch.Tensor, action: torch.Tensor) -> torch.Tensor:
+        """
+        Predict the next state given current state and action.
+        """
+        return self.forward(state, action)
+
+    def compute_loss(self, state: torch.Tensor, action: torch.Tensor,
+                     next_state_target: torch.Tensor) -> torch.Tensor:
+        """
+        Compute loss between predicted and target next state.
+        """
+        next_state_pred = self.forward(state, action)
+        loss = nn.functional.mse_loss(next_state_pred, next_state_target)
+        return loss
+
+
+class DynamicsLearnerTrainer:
+    """
+    Trainer for dynamics learning model.
+    """
+
+    def __init__(self, model: DynamicsLearner, learning_rate: float = 1e-3):
+        self.model = model
+        self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        self.loss_history = []
+
+    def train_step(self, state: torch.Tensor, action: torch.Tensor,
+                   next_state: torch.Tensor) -> float:
+        """
+        Perform one training step.
+        """
+        self.optimizer.zero_grad()
+
+        loss = self.model.compute_loss(state, action, next_state)
+        loss.backward()
+
+        self.optimizer.step()
+
+        return loss.item()
+
+    def train(self, data_loader, num_epochs: int = 100):
+        """
+        Train the dynamics model.
+        """
+        for epoch in range(num_epochs):
+            epoch_loss = 0.0
+            num_batches = 0
+
+            for batch in data_loader:
+                state, action, next_state = batch
+
+                loss = self.train_step(state, action, next_state)
+                epoch_loss += loss
+                num_batches += 1
+
+            avg_loss = epoch_loss / num_batches
+            self.loss_history.append(avg_loss)
+
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch}, Average Loss: {avg_loss:.6f}")
+
+
+def main():
+    """
+    Example usage of system identification and dynamics learning.
+    """
+    print("Starting system identification example...")
+
+    # Create system identifier
+    sys_id = SystemIdentifier()
+
+    # In a real implementation, you would connect to a simulation environment
+    # sim_env = connect_to_simulation()
+    # identified_params = sys_id.estimate_parameters(sim_env)
+
+    print("System identification completed.")
+
+    # Create dynamics learner
+    state_dim = 48  # Example: 24 joint positions + 24 joint velocities
+    action_dim = 24  # Example: 24 joint torques
+    dynamics_model = DynamicsLearner(state_dim, action_dim)
+
+    print("Dynamics model created.")
+    print("This is a framework example - in practice, you would connect to simulation/real robot data.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+### Reality Gap Assessment and Bridging
+
+```python
+#!/usr/bin/env python3
+
+import numpy as np
+import torch
+import torch.nn as nn
+from typing import Dict, List, Tuple, Optional, Callable
+import matplotlib.pyplot as plt
+from scipy import stats
+
+
+class RealityGapAssessor:
+    """
+    Assess the reality gap between simulation and real robot performance.
+    """
+
+    def __init__(self):
+        self.sim_performance = []
+        self.real_performance = []
+        self.gap_metrics = {}
+
+    def add_performance_data(self, sim_perf: float, real_perf: float):
+        """
+        Add performance data from simulation and real robot.
+        """
+        self.sim_performance.append(sim_perf)
+        self.real_performance.append(real_perf)
+
+    def compute_gap_metrics(self) -> Dict[str, float]:
+        """
+        Compute various metrics for the reality gap.
+        """
+        if len(self.sim_performance) == 0 or len(self.real_performance) == 0:
+            return {}
+
+        sim_array = np.array(self.sim_performance)
+        real_array = np.array(self.real_performance)
+
+        metrics = {
+            'mean_gap': np.mean(sim_array - real_array),
+            'std_gap': np.std(sim_array - real_array),
+            'correlation': np.corrcoef(sim_array, real_array)[0, 1],
+            'rmse': np.sqrt(np.mean((sim_array - real_array) ** 2)),
+            'mae': np.mean(np.abs(sim_array - real_array)),
+            'gap_ratio': np.mean(real_array) / np.mean(sim_array)  # Should be close to 1.0
+        }
+
+        self.gap_metrics = metrics
+        return metrics
+
+    def plot_performance_comparison(self):
+        """
+        Plot simulation vs real performance comparison.
+        """
+        if len(self.sim_performance) == 0 or len(self.real_performance) == 0:
+            return
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Scatter plot
+        ax1.scatter(self.sim_performance, self.real_performance, alpha=0.6)
+        min_val = min(min(self.sim_performance), min(self.real_performance))
+        max_val = max(max(self.sim_performance), max(self.real_performance))
+        ax1.plot([min_val, max_val], [min_val, max_val], 'r--', label='Perfect Match')
+        ax1.set_xlabel('Simulation Performance')
+        ax1.set_ylabel('Real Performance')
+        ax1.set_title('Simulation vs Real Performance')
+        ax1.legend()
+
+        # Gap over time
+        gaps = np.array(self.sim_performance) - np.array(self.real_performance)
+        ax2.plot(gaps)
+        ax2.set_xlabel('Trial')
+        ax2.set_ylabel('Performance Gap')
+        ax2.set_title('Reality Gap Over Time')
+        ax2.grid(True)
+
+        plt.tight_layout()
+        plt.show()
+
+    def assess_transfer_success(self, threshold: float = 0.1) -> bool:
+        """
+        Assess if sim-to-real transfer is successful based on gap metrics.
+        """
+        metrics = self.compute_gap_metrics()
+
+        if not metrics:
+            return False
+
+        # Check if the gap is within acceptable bounds
+        return abs(metrics['mean_gap']) < threshold
+
+
+class AdaptiveSimulator:
+    """
+    Adaptive simulator that adjusts parameters based on real robot data.
+    """
+
+    def __init__(self, initial_params: Dict[str, float]):
+        self.params = initial_params.copy()
+        self.param_history = {k: [v] for k, v in initial_params.items()}
+        self.performance_buffer = []
+
+    def update_with_real_data(self, real_obs: np.ndarray, sim_obs: np.ndarray,
+                            action: np.ndarray) -> Dict[str, float]:
+        """
+        Update simulation parameters based on real vs simulated observations.
+        """
+        # Calculate discrepancy between real and simulated observations
+        discrepancy = real_obs - sim_obs
+
+        # Update parameters to reduce discrepancy
+        updated_params = self._adjust_params(discrepancy, action)
+
+        # Store updated parameters
+        for k, v in updated_params.items():
+            self.param_history[k].append(v)
+
+        self.params.update(updated_params)
+        return updated_params
+
+    def _adjust_params(self, discrepancy: np.ndarray, action: np.ndarray) -> Dict[str, float]:
+        """
+        Adjust parameters based on observation discrepancy.
+        """
+        # This is a simplified example - in practice, this would use more sophisticated methods
+        updated_params = self.params.copy()
+
+        # Example: adjust mass based on acceleration discrepancy
+        if 'mass_multiplier' in updated_params:
+            # If we observe higher acceleration than expected, the mass might be lower
+            acc_discrepancy = np.mean(discrepancy)  # Simplified
+            adjustment = 0.01 * acc_discrepancy
+            updated_params['mass_multiplier'] = max(0.5, min(2.0,
+                updated_params['mass_multiplier'] - adjustment))
+
+        # Example: adjust friction based on velocity discrepancy
+        if 'friction_multiplier' in updated_params:
+            vel_discrepancy = np.mean(discrepancy)  # Simplified
+            adjustment = 0.01 * vel_discrepancy
+            updated_params['friction_multiplier'] = max(0.1, min(3.0,
+                updated_params['friction_multiplier'] - adjustment))
+
+        return updated_params
+
+    def get_adaptation_strength(self, param_name: str, window_size: int = 10) -> float:
+        """
+        Get the adaptation strength for a parameter (how much it has changed recently).
+        """
+        if param_name not in self.param_history:
+            return 0.0
+
+        history = self.param_history[param_name][-window_size:]
+        if len(history) < 2:
+            return 0.0
+
+        # Calculate the rate of change
+        changes = np.diff(history)
+        return np.mean(np.abs(changes))
+
+
+class TransferOptimizer:
+    """
+    Optimize sim-to-real transfer by adjusting training and deployment strategies.
+    """
+
+    def __init__(self):
+        self.transfer_strategies = {
+            'domain_randomization': True,
+            'system_identification': True,
+            'online_adaptation': True,
+            'robust_control': True
+        }
+        self.strategy_weights = {
+            'domain_randomization': 0.4,
+            'system_identification': 0.3,
+            'online_adaptation': 0.2,
+            'robust_control': 0.1
+        }
+
+    def optimize_transfer(self, sim_env, real_robot, task_performance_func: Callable) -> Dict:
+        """
+        Optimize the transfer process based on performance feedback.
+        """
+        # Initialize with default strategy
+        best_strategy = self._evaluate_strategy(
+            sim_env, real_robot, task_performance_func, self.strategy_weights
+        )
+
+        # Try different strategy combinations
+        strategy_variants = self._generate_strategy_variants()
+
+        for variant in strategy_variants:
+            performance = self._evaluate_strategy(
+                sim_env, real_robot, task_performance_func, variant
+            )
+
+            if performance > best_strategy['performance']:
+                best_strategy = {
+                    'weights': variant,
+                    'performance': performance
+                }
+
+        return best_strategy
+
+    def _evaluate_strategy(self, sim_env, real_robot, task_performance_func: Callable,
+                          weights: Dict[str, float]) -> float:
+        """
+        Evaluate a specific transfer strategy.
+        """
+        # Apply the strategy weights to configure the transfer process
+        # This is a simplified example
+        performance = task_performance_func()
+        return performance
+
+    def _generate_strategy_variants(self) -> List[Dict[str, float]]:
+        """
+        Generate different strategy variants to try.
+        """
+        variants = []
+
+        # Base variant
+        base_weights = self.strategy_weights.copy()
+        variants.append(base_weights)
+
+        # Emphasize domain randomization
+        dr_weights = base_weights.copy()
+        dr_weights['domain_randomization'] = 0.6
+        dr_weights['system_identification'] = 0.2
+        dr_weights['online_adaptation'] = 0.1
+        dr_weights['robust_control'] = 0.1
+        variants.append(dr_weights)
+
+        # Emphasize system identification
+        si_weights = base_weights.copy()
+        si_weights['domain_randomization'] = 0.2
+        si_weights['system_identification'] = 0.5
+        si_weights['online_adaptation'] = 0.2
+        si_weights['robust_control'] = 0.1
+        variants.append(si_weights)
+
+        # Emphasize online adaptation
+        oa_weights = base_weights.copy()
+        oa_weights['domain_randomization'] = 0.3
+        oa_weights['system_identification'] = 0.2
+        oa_weights['online_adaptation'] = 0.4
+        oa_weights['robust_control'] = 0.1
+        variants.append(oa_weights)
+
+        return variants
+
+
+def assess_reality_gap(sim_env, real_robot, num_trials: int = 50) -> Dict[str, float]:
+    """
+    Comprehensive reality gap assessment.
+    """
+    assessor = RealityGapAssessor()
+
+    print(f"Assessing reality gap over {num_trials} trials...")
+
+    for trial in range(num_trials):
+        # Run same task in simulation and on real robot
+        sim_perf = run_task_in_simulation(sim_env)
+        real_perf = run_task_on_real_robot(real_robot)
+
+        assessor.add_performance_data(sim_perf, real_perf)
+
+        if trial % 10 == 0:
+            print(f"Completed {trial + 1}/{num_trials} trials")
+
+    # Compute final metrics
+    metrics = assessor.compute_gap_metrics()
+
+    print(f"Reality gap assessment completed:")
+    for metric, value in metrics.items():
+        print(f"  {metric}: {value:.4f}")
+
+    return metrics
+
+
+def run_task_in_simulation(sim_env) -> float:
+    """
+    Placeholder function to run a task in simulation.
+    """
+    # In a real implementation, this would run a specific task in the simulation
+    # and return a performance metric
+    return np.random.uniform(0.7, 1.0)  # Placeholder performance
+
+
+def run_task_on_real_robot(real_robot) -> float:
+    """
+    Placeholder function to run a task on the real robot.
+    """
+    # In a real implementation, this would run a specific task on the real robot
+    # and return a performance metric
+    return np.random.uniform(0.5, 0.9)  # Placeholder performance, typically lower than sim
+
+
+def main():
+    """
+    Example usage of reality gap assessment tools.
+    """
+    print("Starting reality gap assessment example...")
+
+    # In a real implementation, you would connect to simulation and real robot
+    # sim_env = connect_to_simulation()
+    # real_robot = connect_to_real_robot()
+
+    # Assess reality gap
+    # gap_metrics = assess_reality_gap(sim_env, real_robot, num_trials=20)
+
+    print("Reality gap assessment framework ready.")
+    print("This is a framework example - in practice, you would connect to actual systems.")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+## Diagrams and Visuals
+
+![Sim-to-Real Transfer Pipeline](/img/diagrams/sim-to-real-transfer-pipeline.png)
+
+*Figure 1: The sim-to-real transfer pipeline, showing the flow from simulation training through domain randomization, system identification, and real-world deployment.*
+
+## Hands-On Lab
+
+### Exercise 1: Domain Randomization Implementation
+Implement domain randomization for a humanoid task:
+
+1. Set up domain randomization for robot physical parameters
+2. Implement visual domain randomization for camera sensors
+3. Train a policy with domain randomization
+4. Test the policy on a consistent environment
+5. Compare performance with and without domain randomization
+
+### Exercise 2: System Identification
+Identify real robot parameters:
+
+1. Collect excitation data from the real robot
+2. Implement least squares system identification
+3. Identify key physical parameters (masses, inertias, friction)
+4. Update simulation with identified parameters
+5. Evaluate the improvement in sim-to-real transfer
+
+### Exercise 3: Adaptive Simulation
+Implement adaptive simulation:
+
+1. Create a mechanism to compare sim vs real observations
+2. Implement parameter updates based on discrepancies
+3. Test the adaptive simulator with changing conditions
+4. Evaluate the stability and convergence of adaptation
+5. Assess the impact on transfer performance
+
+## Troubleshooting
+
+Common sim-to-real transfer issues and solutions:
+
+- **Issue: Large reality gap**: Increase domain randomization range, improve system identification, or use more realistic simulation models.
+- **Issue: Unstable adaptation**: Add regularization to parameter updates, implement parameter bounds, or reduce adaptation rate.
+- **Issue: Poor transfer performance**: Reassess the task similarity between sim and real, improve reward function alignment, or use more sophisticated transfer methods.
+- **Issue: Overfitting to simulation**: Increase domain randomization diversity, add real-world data to training, or implement robust control methods.
+
+## Summary
+
+This chapter covered sim-to-real transfer strategies for humanoid robots, including domain randomization, system identification, and adaptive simulation techniques. These methods are crucial for bridging the gap between simulation and reality, enabling policies trained in simulation to perform effectively on physical robots. The combination of these techniques allows for more robust and transferable robot control systems.
+
+## Further Reading
+
+- Domain Randomization for Robotics
+- System Identification in Robotics
+- Sim-to-Real Transfer in Deep Reinforcement Learning
+
+## References
+
+For academic citations, use the references.bib file in the references/ directory.
+
+## Exercises
+
+1. Implement domain randomization for a specific humanoid task and evaluate its effectiveness.
+2. Design a system identification experiment for a real humanoid robot.
+3. Create an adaptive simulation environment that updates based on real robot data.
+
+<!-- Optional: Add custom components for interactive elements -->

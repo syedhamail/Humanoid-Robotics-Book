@@ -1,0 +1,54 @@
+<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
+  <!-- Title -->
+  <text x="400" y="30" text-anchor="middle" font-family="Arial" font-size="20" font-weight="bold">Humanoid Robotics System Architecture</text>
+
+  <!-- ROS 2 Core -->
+  <rect x="50" y="60" width="200" height="100" fill="#e1f5fe" stroke="#0277bd" stroke-width="2" rx="10"/>
+  <text x="150" y="90" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">ROS 2 Core</text>
+  <text x="150" y="110" text-anchor="middle" font-family="Arial" font-size="12">Nodes, Topics, Services</text>
+
+  <!-- Simulation Layer -->
+  <rect x="300" y="60" width="200" height="100" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2" rx="10"/>
+  <text x="400" y="90" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Simulation Layer</text>
+  <text x="400" y="110" text-anchor="middle" font-family="Arial" font-size="12">Gazebo, Isaac Sim</text>
+
+  <!-- AI Layer -->
+  <rect x="550" y="60" width="200" height="100" fill="#e8f5e8" stroke="#388e3c" stroke-width="2" rx="10"/>
+  <text x="650" y="90" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">AI Layer</text>
+  <text x="650" y="110" text-anchor="middle" font-family="Arial" font-size="12">LLMs, Perception</text>
+
+  <!-- Perception Stack -->
+  <rect x="100" y="200" width="200" height="100" fill="#fff3e0" stroke="#f57c00" stroke-width="2" rx="10"/>
+  <text x="200" y="230" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Perception</text>
+  <text x="200" y="250" text-anchor="middle" font-family="Arial" font-size="12">Vision, SLAM, Sensors</text>
+
+  <!-- Control Stack -->
+  <rect x="350" y="200" width="200" height="100" fill="#e3f2fd" stroke="#1976d2" stroke-width="2" rx="10"/>
+  <text x="450" y="230" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Control</text>
+  <text x="450" y="250" text-anchor="middle" font-family="Arial" font-size="12">Navigation, Manipulation</text>
+
+  <!-- Hardware Interface -->
+  <rect x="600" y="200" width="150" height="100" fill="#ffebee" stroke="#d32f2f" stroke-width="2" rx="10"/>
+  <text x="675" y="230" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Hardware</text>
+  <text x="675" y="250" text-anchor="middle" font-family="Arial" font-size="12">Motors, Sensors</text>
+
+  <!-- VLA Components -->
+  <rect x="200" y="350" width="400" height="100" fill="#f1f8e9" stroke="#689f38" stroke-width="2" rx="10"/>
+  <text x="400" y="380" text-anchor="middle" font-family="Arial" font-size="14" font-weight="bold">Vision-Language-Action (VLA)</text>
+  <text x="400" y="400" text-anchor="middle" font-family="Arial" font-size="12">Voice, Vision, Multi-Modal Fusion</text>
+
+  <!-- Arrows showing data flow -->
+  <line x1="150" y1="160" x2="200" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="400" y1="160" x2="450" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="650" y1="160" x2="675" y2="200" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="200" y1="300" x2="400" y2="350" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="450" y1="300" x2="400" y2="350" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="675" y1="300" x2="400" y2="350" stroke="#000" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#000" />
+    </marker>
+  </defs>
+</svg>
