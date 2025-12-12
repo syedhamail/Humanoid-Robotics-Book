@@ -15,15 +15,15 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://your-github-username.github.io',
+  url: 'https://syedhamail.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/my-humanoid-robotics-book/',
+  baseUrl: '/Humanoid-Robotics-Book/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'your-github-username', // Usually your GitHub org/user name.
-  projectName: 'my-humanoid-robotics-book', // Usually your repo name.
+  organizationName: 'syedhamail', // Usually your GitHub org/user name.
+  projectName: 'Humanoid-Robotics-Book', // Usually your repo name.
 
   onBrokenLinks: 'throw',
 
@@ -44,7 +44,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/your-github-username/my-humanoid-robotics-book/tree/main/website/',
+            'https://github.com/syedhamail/Humanoid-Robotics-Book/tree/main/website/',
         },
         blog: {
           showReadingTime: true,
@@ -55,7 +55,7 @@ const config: Config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl:
-            'https://github.com/your-github-username/my-humanoid-robotics-book/tree/main/website/',
+            'https://github.com/syedhamail/Humanoid-Robotics-Book/tree/main/website/',
           // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
@@ -88,7 +88,7 @@ const config: Config = {
           label: 'Learn Robotics',
         },
         {
-          href: 'https://github.com/syedhamail/my-humanoid-robotics-book',
+          href: 'https://github.com/syedhamail/Humanoid-Robotics-Book',
           label: 'GitHub',
           position: 'right',
         },
@@ -120,7 +120,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/syedhamail/my-humanoid-robotics-book',
+              href: 'https://github.com/syedhamail/Humanoid-Robotics-Book',
             },
           ],
         },

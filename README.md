@@ -4,7 +4,7 @@ This repository contains the source code and documentation for a humanoid roboti
 
 ## Repository
 
-GitHub: https://github.com/syedhamail/my-humanoid-robotics-book
+GitHub: https://github.com/syedhamail/Humanoid-Robotics-Book
 
 ## Project Structure
 
@@ -31,7 +31,7 @@ GitHub: https://github.com/syedhamail/my-humanoid-robotics-book
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/syedhamail/my-humanoid-robotics-book.git
+   git clone https://github.com/syedhamail/Humanoid-Robotics-Book.git
    ```
 
 2. Navigate to the project directory:
