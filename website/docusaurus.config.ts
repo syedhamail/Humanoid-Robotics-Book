@@ -16,7 +16,7 @@ const config: Config = {
   url: 'https://syedhamail.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/Humanoid-Robotics-Book/',
+  baseUrl: '/',
 
   organizationName: 'syedhamail',
   projectName: 'Humanoid-Robotics-Book',
