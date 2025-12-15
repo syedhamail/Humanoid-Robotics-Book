@@ -1,37 +1,87 @@
-.features {
+/* .features {
   display: flex;
   justify-content: center;
   align-items: flex-start;
   padding: 2rem 0;
   width: 100%;
-}
+} */
 
 /* The wrapper that controls SVG size */
-.iconBox {
+/* .iconBox {
   width: 130px;
   height: 130px;
   margin: 0 auto;
   display: flex;
   justify-content: center;
   align-items: center;
-}
+} */
 
 /* Target INNER <svg> rendered by Docusaurus */
-.iconBox :global(svg) {
+/* .iconBox :global(svg) {
   width: 100% !important;
   height: 100% !important;
   object-fit: contain !important;
   display: block;
-}
+} */
 
 /* Title styles */
-h3 {
+/* h3 {
   font-size: 1.25rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
-}
+} */
 
 /* Paragraph styles */
+/* p {
+  font-size: 0.95rem;
+} */
+.section {
+  padding: 5rem 0;
+  background: linear-gradient(180deg, var(--ifm-background-color), rgba(0, 0, 0, 0.03));
+}
+
+
+.card {
+  text-align: center;
+  padding: 2.5rem 1.5rem;
+  border-radius: 18px;
+  background: var(--ifm-card-background-color);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.06);
+  transition: transform 0.35s ease, box-shadow 0.35s ease;
+}
+
+
+.card:hover {
+  transform: translateY(-10px) scale(1.02);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.12);
+}
+
+
+.iconWrapper {
+  width: 120px;
+  height: 120px;
+  margin: 0 auto 1.2rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4facfe, #00f2fe);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+
+.icon {
+  width: 60px;
+  height: 60px;
+}
+
+
+h3 {
+  margin-top: 1rem;
+  font-weight: 600;
+}
+
+
 p {
   font-size: 0.95rem;
+  opacity: 0.85;
 }

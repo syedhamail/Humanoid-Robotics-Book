@@ -1,0 +1,117 @@
+.contactSection {
+    padding: 6rem 0;
+    background:
+        radial-gradient(circle at top left, rgba(79, 172, 254, 0.15), transparent 40%),
+        radial-gradient(circle at bottom right, rgba(0, 242, 254, 0.12), transparent 45%);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+    align-items: center;
+}
+
+.info h2 {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+.info p {
+    opacity: 0.85;
+    max-width: 420px;
+}
+
+.info ul {
+    margin-top: 2rem;
+    list-style: none;
+    padding: 0;
+}
+
+.info li {
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    opacity: 0.9;
+}
+
+/* FORM */
+.form {
+    background: var(--ifm-background-surface-color);
+    padding: 2.5rem;
+    border-radius: 20px;
+    box-shadow: 0 30px 60px rgba(0, 0, 0, 0.08);
+}
+
+.form input,
+.form textarea {
+    width: 100%;
+    margin-bottom: 1rem;
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    color: inherit;
+}
+
+.form textarea {
+    min-height: 120px;
+    resize: none;
+}
+
+.form input:focus,
+.form textarea:focus {
+    outline: none;
+    border-color: var(--ifm-color-primary);
+}
+
+/* BUTTON */
+.form button {
+    width: 100%;
+    padding: 0.9rem;
+    border-radius: 14px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+    color: #000;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.form button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 40px rgba(79, 172, 254, 0.45);
+}
+
+.toast {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    padding: 1rem 1.5rem;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #4facfe, #00f2fe);
+    color: #000;
+    font-weight: 600;
+    box-shadow: 0 20px 40px rgba(79, 172, 254, 0.45);
+    animation: slideUp 0.5s ease;
+    z-index: 9999;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+
+/* MOBILE */
+@media (max-width: 900px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}

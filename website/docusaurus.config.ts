@@ -1,38 +1,38 @@
-import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
+import { themes as prismThemes } from 'prism-react-renderer';
+import type { Config } from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
-// This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
+// This runs in Node.js - safe to use process.env here
 
 const config: Config = {
   title: 'Physical AI & Humanoid Robotics',
   tagline: 'Building Embodied Intelligence',
   favicon: 'img/favicon.ico',
 
-  // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
-    v4: true, // Improve compatibility with the upcoming Docusaurus v4
+    v4: true,
   },
 
-  // Set the production url of your site here
   url: 'https://syedhamail.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/',
+  baseUrl: '/Humanoid-Robotics-Book/',
 
-  // GitHub pages deployment config.
-  // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'syedhamail', // Usually your GitHub org/user name.
-  projectName: 'Humanoid-Robotics-Book', // Usually your repo name.
+  organizationName: 'syedhamail',
+  projectName: 'Humanoid-Robotics-Book',
 
   onBrokenLinks: 'throw',
 
-  // Even if you don't use internationalization, you can use this field to set
-  // useful metadata like html lang. For example, if your site is Chinese, you
-  // may want to replace "en" with "zh-Hans".
   i18n: {
     defaultLocale: 'en',
     locales: ['en'],
+  },
+
+  // 🔐 SAFE ENV INJECTION (IMPORTANT PART FOR CONTACT FORM)
+  customFields: {
+    emailjsServiceId: process.env.EMAILJS_SERVICE_ID,
+    emailjsTemplateId: process.env.EMAILJS_TEMPLATE_ID,
+    emailjsPublicKey: process.env.EMAILJS_PUBLIC_KEY,
   },
 
   presets: [
@@ -41,8 +41,6 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
           editUrl:
             'https://github.com/syedhamail/Humanoid-Robotics-Book/tree/main/website/',
         },
@@ -52,11 +50,8 @@ const config: Config = {
             type: ['rss', 'atom'],
             xslt: true,
           },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
           editUrl:
             'https://github.com/syedhamail/Humanoid-Robotics-Book/tree/main/website/',
-          // Useful options to enforce blogging best practices
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
           onUntruncatedBlogPosts: 'warn',
@@ -69,7 +64,6 @@ const config: Config = {
   ],
 
   themeConfig: {
-    // Replace with your project's social card
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
       respectPrefersColorScheme: true,

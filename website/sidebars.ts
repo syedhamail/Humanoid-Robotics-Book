@@ -6,7 +6,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Module 1: ROS 2 Fundamentals',
-      collapsed: false,
+      collapsed: true,
       items: [
         'module1/chapter1',
         'module1/chapter2',
@@ -20,7 +20,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Module 2: Building Digital Twins',
-      collapsed: false,
+      collapsed: true,
       items: [
         'module2/chapter1',
         'module2/chapter2',
@@ -34,7 +34,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Module 3: AI-Robot Brain with NVIDIA Isaac',
-      collapsed: false,
+      collapsed: true,
       items: [
         'module3/chapter1',
         'module3/chapter2',
@@ -48,7 +48,7 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'Module 4: Vision-Language-Action Integration (Capstone)',
-      collapsed: false,
+      collapsed: true,
       items: [
         'module4/chapter1',
         'module4/chapter2',
